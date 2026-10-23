@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Dashboard — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">ADMIN · DASHBOARD</div>
+      <h2 class="page-title">Administration</h2>
+      <p class="page-desc">Register employees, manage accounts and view system metrics.</p>
+      <div class="grid-3" id="stats"></div>
+      <div class="card">
+        <div class="card-head"><h3>Quick links</h3></div>
+        <div class="btn-row" style="margin-top:0">
+          <a class="btn btn-primary" href="register-employee.html">Register Employee</a>
+          <a class="btn btn-ghost" href="manage-accounts.html">Manage Accounts</a>
+          <a class="btn btn-ghost" href="metrics.html">System Metrics</a>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    const s = Session.requireLogin(['Admin']);
+    if (!s) throw new Error('redirect');
+    renderChrome('admin-dashboard.html');
+    (async function () {
+      const stats = document.getElementById('stats');
+      try {
+        const m = await DB.getMetrics();
+        stats.innerHTML = `
+          <div class="stat"><div class="num">${m.activePatients ?? '—'}</div><div class="label">Active patients</div></div>
+          <div class="stat"><div class="num">${m.activeEmployees ?? '—'}</div><div class="label">Active staff</div></div>
+          <div class="stat"><div class="num">${m.scheduledAppointments ?? '—'}</div><div class="label">Scheduled appointments</div></div>`;
+      } catch (err) {
+        stats.innerHTML = `<div class="card" style="grid-column:1/-1">${emptyState(apiErrorMessage(err))}</div>`;
+      }
+    })();
+  </script>
+</body>
+</html>

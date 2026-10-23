@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Consultation — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">CLINICAL · CONSULTATION</div>
+      <h2 class="page-title">Create consultation</h2>
+      <p class="page-desc">Capture vitals, clinical notes, diagnosis and optional prescription. Linked to an existing appointment.</p>
+
+      <div id="form-banner" class="banner"></div>
+
+      <form id="consult-form" novalidate>
+        <div class="card">
+          <div class="card-head"><h3>Appointment</h3></div>
+          <label for="apptId">Select appointment <span class="req">*</span></label>
+          <select id="apptId"></select>
+          <div class="field-error" id="err-appt"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Vitals</h3></div>
+          <div class="grid-3">
+            <div>
+              <label for="bp">Blood pressure</label>
+              <input type="text" id="bp" placeholder="e.g. 120/80">
+            </div>
+            <div>
+              <label for="hr">Heart rate (bpm)</label>
+              <input type="number" id="hr" min="1" placeholder="72">
+            </div>
+            <div>
+              <label for="temp">Temperature (°C)</label>
+              <input type="number" id="temp" step="0.1" min="30" max="45" placeholder="36.6">
+            </div>
+          </div>
+          <div class="grid-2" style="margin-top:8px">
+            <div>
+              <label for="weight">Weight (kg)</label>
+              <input type="number" id="weight" step="0.1" min="0" placeholder="70.5">
+            </div>
+            <div>
+              <label for="duration">Duration (minutes) <span class="req">*</span></label>
+              <input type="number" id="duration" min="1" value="15">
+              <div class="field-error" id="err-duration"></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Clinical notes</h3></div>
+          <label for="complaint">Chief complaint</label>
+          <textarea id="complaint" rows="2"></textarea>
+          <label for="exam">Examination findings</label>
+          <textarea id="exam" rows="2"></textarea>
+          <label for="notes">Consultation notes</label>
+          <textarea id="notes" rows="3"></textarea>
+          <label for="severity">Severity status</label>
+          <select id="severity">
+            <option value="">—</option>
+            <option value="Mild">Mild</option>
+            <option value="Moderate">Moderate</option>
+            <option value="Severe">Severe</option>
+          </select>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Diagnosis</h3></div>
+          <label for="diagnoseId">Primary diagnosis</label>
+          <select id="diagnoseId"></select>
+          <label for="diagReason">Reason / clinical justification</label>
+          <input type="text" id="diagReason">
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h3>Prescription (optional)</h3></div>
+          <label for="invId">Medication</label>
+          <select id="invId"><option value="">None</option></select>
+          <div class="grid-2">
+            <div>
+              <label for="dosage">Dosage</label>
+              <input type="text" id="dosage" placeholder="e.g. 1 tablet">
+            </div>
+            <div>
+              <label for="freq">Frequency</label>
+              <input type="text" id="freq" placeholder="e.g. Twice daily">
+            </div>
+          </div>
+          <div class="grid-2">
+            <div>
+              <label for="dur">Duration</label>
+              <input type="text" id="dur" placeholder="e.g. 5 days">
+            </div>
+            <div>
+              <label for="dispenseType">Dispense type</label>
+              <select id="dispenseType">
+                <option value="Prescribed">Prescribed</option>
+                <option value="Given">Given (in-clinic)</option>
+              </select>
+            </div>
+          </div>
+          <label for="qty">Quantity</label>
+          <input type="number" id="qty" min="1" placeholder="Optional">
+          <label for="instr">Instructions</label>
+          <input type="text" id="instr">
+        </div>
+
+        <div class="btn-row">
+          <button type="submit" class="btn btn-primary">Save consultation</button>
+          <a class="btn btn-ghost" href="doctor-dashboard.html">Cancel</a>
+        </div>
+      </form>
+    </main>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = [
+      'A consultation must be linked to an existing appointment.',
+      'The clinician (you) is recorded on the Consultation row.',
+      'Prescriptions optionally reduce stock when DispenseType is “Given”.'
+    ];
+    const s = Session.requireLogin(['Doctor', 'Nurse']);
+    if (!s) throw new Error('redirect');
+    renderChrome('consultation.html');
+
+    const apptSelect = document.getElementById('apptId');
+    const submitButton = document.querySelector('#consult-form button[type="submit"]');
+    const diagnosisSelect = document.getElementById('diagnoseId');
+    const inventorySelect = document.getElementById('invId');
+    const appointmentsById = new Map();
+
+    function escapeClinicalHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+    }
+
+    const checkAppt = bindField(apptSelect, document.getElementById('err-appt'), (v) => Validate.notEmpty(v), 'Select an appointment.');
+    const checkDur = bindField(document.getElementById('duration'), document.getElementById('err-duration'),
+      (v) => Validate.positiveInt(v), 'Enter a positive duration in minutes.');
+
+    document.getElementById('consult-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      if (!checkAppt() || !checkDur()) {
+        showBanner('form-banner', 'Please fix the required fields.', 'error');
+        return;
+      }
+
+      const apptId = Number(apptSelect.value);
+      const appt = appointmentsById.get(apptId);
+      if (!appt) {
+        showBanner('form-banner', 'That appointment is no longer available. Refresh and select a scheduled appointment.', 'error');
+        return;
+      }
+
+      const inventoryId = inventorySelect.value ? Number(inventorySelect.value) : null;
+      const quantityInput = document.getElementById('qty').value;
+      const quantity = quantityInput ? Number(quantityInput) : 1;
+      if (inventoryId && (!Number.isInteger(quantity) || quantity < 1)) {
+        showBanner('form-banner', 'Enter a valid whole-number medication quantity.', 'error');
+        return;
+      }
+      const heartRate = document.getElementById('hr').value;
+      const temperature = document.getElementById('temp').value;
+      const weight = document.getElementById('weight').value;
+      if ((heartRate && (!Number.isInteger(Number(heartRate)) || Number(heartRate) < 1 || Number(heartRate) > 300)) ||
+          (temperature && (!Number.isFinite(Number(temperature)) || Number(temperature) < 30 || Number(temperature) > 45)) ||
+          (weight && (!Number.isFinite(Number(weight)) || Number(weight) <= 0 || Number(weight) > 500))) {
+        showBanner('form-banner', 'Check that the vital measurements are within valid ranges.', 'error');
+        return;
+      }
+
+      submitButton.disabled = true;
+      submitButton.textContent = 'Saving…';
+      try {
+        await DB.createConsultation({
+          Appointment_ID: apptId,
+          Duration: Number(document.getElementById('duration').value),
+          Complaint: document.getElementById('complaint').value.trim(),
+          Examination: document.getElementById('exam').value.trim(),
+          Notes: document.getElementById('notes').value.trim(),
+          BloodPressure: document.getElementById('bp').value.trim(),
+          HeartRate: heartRate ? Number(heartRate) : null,
+          Temperature: temperature ? Number(temperature) : null,
+          Weight: weight ? Number(weight) : null,
+          Severity: document.getElementById('severity').value,
+          Diagnose_ID: diagnosisSelect.value ? Number(diagnosisSelect.value) : null,
+          DiagnosisReason: document.getElementById('diagReason').value.trim(),
+          Inventory_ID: inventoryId,
+          Quantity: quantity,
+          Dosage: document.getElementById('dosage').value.trim(),
+          Frequency: document.getElementById('freq').value.trim(),
+          PrescriptionDuration: document.getElementById('dur').value.trim(),
+          DispenseType: document.getElementById('dispenseType').value,
+          Instructions: document.getElementById('instr').value.trim()
+        });
+        toast('Consultation saved successfully.', 'success');
+        showBanner('form-banner', 'Consultation saved and appointment marked completed.', 'success');
+        setTimeout(() => { window.location.href = 'doctor-dashboard.html'; }, 700);
+      } catch (err) {
+        showBanner('form-banner', apiErrorMessage(err), 'error');
+      } finally {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Save consultation';
+      }
+    });
+
+    async function loadConsultationOptions() {
+      submitButton.disabled = true;
+      appointmentsById.clear();
+      apptSelect.innerHTML = '<option value="">Loading appointments…</option>';
+      const [appointmentsResult, diagnosesResult, inventoryResult] = await Promise.allSettled([
+        DB.getAppointments(),
+        DB.getDiagnoses(),
+        DB.getInventory()
+      ]);
+      if (appointmentsResult.status === 'rejected') {
+        apptSelect.innerHTML = '<option value="">Unable to load appointments</option>';
+        showBanner('form-banner', apiErrorMessage(appointmentsResult.reason), 'error');
+        return;
+      }
+
+      const appointments = (Array.isArray(appointmentsResult.value) ? appointmentsResult.value : [])
+        .slice()
+        .sort((left, right) =>
+          `${left.AppointmentDate || ''}${left.AppointmentTime || ''}`
+            .localeCompare(`${right.AppointmentDate || ''}${right.AppointmentTime || ''}`)
+        );
+      appointments.forEach(appointment => appointmentsById.set(Number(appointment.Appointment_ID), appointment));
+      apptSelect.innerHTML = '<option value="">Select appointment…</option>' +
+        appointments.map(appointment => {
+          const patientName = [appointment.PatientFirstName, appointment.PatientLastName].filter(Boolean).join(' ') || 'Patient';
+          const status = String(appointment.Status || appointment.AppointmentStatus || appointment.Appointment_Status || 'Scheduled').trim();
+          const isScheduled = status.toLowerCase() === 'scheduled';
+          return `<option value="${Number(appointment.Appointment_ID)}" ${isScheduled ? '' : 'disabled'}>${escapeClinicalHtml(formatDate(appointment.AppointmentDate))} ${escapeClinicalHtml(String(appointment.AppointmentTime || '').slice(0, 5))} — ${escapeClinicalHtml(patientName)}${appointment.Reason ? ` · ${escapeClinicalHtml(appointment.Reason)}` : ''} (${escapeClinicalHtml(status)})</option>`;
+        }).join('');
+
+      diagnosisSelect.innerHTML = '<option value="">None</option>' +
+        (diagnosesResult.status === 'fulfilled' && Array.isArray(diagnosesResult.value) ? diagnosesResult.value : []).map(diagnosis =>
+          `<option value="${Number(diagnosis.Diagnose_ID)}">${escapeClinicalHtml(diagnosis.DiagnoseName)}${diagnosis.Severity ? ` (${escapeClinicalHtml(diagnosis.Severity)})` : ''}</option>`
+        ).join('');
+
+      inventorySelect.innerHTML = '<option value="">None</option>' +
+        (inventoryResult.status === 'fulfilled' && Array.isArray(inventoryResult.value) ? inventoryResult.value : [])
+          .filter(item => Number(item.StockQuantity) > 0)
+          .map(item =>
+            `<option value="${Number(item.Inventory_ID)}">${escapeClinicalHtml(item.MedicationName)} ${escapeClinicalHtml(item.Concentration || '')} (stock: ${Number(item.StockQuantity)})</option>`
+          ).join('');
+
+      const requestedAppointment = new URLSearchParams(window.location.search).get('appt');
+      if (requestedAppointment) {
+        const requestedId = Number(requestedAppointment);
+        const requested = appointmentsById.get(requestedId);
+        if (requested && String(requested.Status || requested.AppointmentStatus || requested.Appointment_Status || 'Scheduled').trim().toLowerCase() === 'scheduled') {
+          apptSelect.value = String(requestedId);
+        } else if (requested) {
+          showBanner('form-banner', 'This appointment is displayed but cannot be recorded because it is not scheduled.', 'error');
+        } else {
+          showBanner('form-banner', 'The requested appointment was not returned by the server.', 'error');
+        }
+      }
+
+      const hasScheduledAppointment = appointments.some(appointment =>
+        String(appointment.Status || appointment.AppointmentStatus || appointment.Appointment_Status || 'Scheduled').trim().toLowerCase() === 'scheduled'
+      );
+      if (!appointments.length) {
+        apptSelect.innerHTML = '<option value="">No appointments found</option>';
+        showBanner('form-banner', 'No appointments were returned for this account.', 'info');
+        return;
+      }
+
+      submitButton.disabled = !hasScheduledAppointment;
+      const optionErrors = [];
+      if (diagnosesResult.status === 'rejected') {
+        optionErrors.push(`Diagnosis options: ${apiErrorMessage(diagnosesResult.reason)}`);
+      }
+      if (inventoryResult.status === 'rejected') {
+        optionErrors.push(`Medication options: ${apiErrorMessage(inventoryResult.reason)}`);
+      }
+      if (optionErrors.length) showBanner('form-banner', optionErrors.join(' '), 'error');
+    }
+
+    loadConsultationOptions();
+  </script>
+</body>
+</html>

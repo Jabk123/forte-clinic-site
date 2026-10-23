@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clinical Dashboard — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">CLINICAL · DASHBOARD</div>
+      <h2 class="page-title">Clinical overview</h2>
+      <p class="page-desc">Today’s appointments and recent consultations.</p>
+      <div class="grid-3" id="stats"></div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Today’s schedule</h3>
+          <button class="btn btn-sm btn-ghost" id="refresh-clinical-dashboard" type="button">Refresh</button>
+          <a class="btn btn-sm btn-primary" href="consultation.html">Record consultation</a>
+        </div>
+        <div id="list"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Recent consultations</h3></div>
+        <div id="consultations-list"></div>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    const s = Session.requireLogin(['Doctor', 'Nurse']);
+    if (!s) throw new Error('redirect');
+    renderChrome('doctor-dashboard.html');
+    function escapeClinicalHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+    }
+
+    async function loadClinicalDashboard() {
+      const list = document.getElementById('list');
+      const stats = document.getElementById('stats');
+      const consultationsList = document.getElementById('consultations-list');
+      list.innerHTML = '<p class="hint">Loading schedule…</p>';
+      consultationsList.innerHTML = '<p class="hint">Loading consultations…</p>';
+      const [appointmentsResult, consultationsResult] = await Promise.allSettled([
+        DB.getAppointments(),
+        DB.getConsultations()
+      ]);
+
+      let appointments = [];
+      if (appointmentsResult.status === 'fulfilled') {
+        appointments = Array.isArray(appointmentsResult.value) ? appointmentsResult.value : [];
+        const now = new Date();
+        const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const scheduled = appointments.filter(appointment =>
+          String(appointment.Status || appointment.AppointmentStatus || '').trim().toLowerCase() === 'scheduled'
+        );
+        const todayList = scheduled.filter(appointment => String(appointment.AppointmentDate).slice(0, 10) === today);
+        stats.innerHTML = `
+          <div class="stat"><div class="num">${todayList.length}</div><div class="label">Today</div></div>
+          <div class="stat"><div class="num">${scheduled.length}</div><div class="label">Scheduled</div></div>
+          <div class="stat"><div class="num">${appointments.length}</div><div class="label">All appointments</div></div>`;
+        list.innerHTML = todayList.length
+          ? `<div class="table-wrap"><table><thead><tr><th>Time</th><th>Patient</th><th>Reason</th><th>Status</th><th></th></tr></thead><tbody>
+              ${todayList.map(appointment => `<tr>
+                <td>${escapeClinicalHtml(String(appointment.AppointmentTime || '—').slice(0, 5))}</td>
+                <td>${escapeClinicalHtml([appointment.PatientFirstName, appointment.PatientLastName].filter(Boolean).join(' ') || '—')}</td>
+                <td>${escapeClinicalHtml(appointment.Reason || '—')}</td>
+                <td>${statusBadge(escapeClinicalHtml(appointment.Status || 'Scheduled'))}</td>
+                <td><a class="btn btn-sm btn-primary" href="consultation.html?appt=${Number(appointment.Appointment_ID)}">Record</a></td>
+              </tr>`).join('')}
+            </tbody></table></div>`
+          : emptyState('No appointments scheduled for today.');
+      } else {
+        stats.innerHTML = '';
+        list.innerHTML = emptyState(`Unable to load schedule: ${escapeClinicalHtml(apiErrorMessage(appointmentsResult.reason))}`);
+      }
+
+      if (consultationsResult.status === 'fulfilled') {
+        const consultations = Array.isArray(consultationsResult.value) ? consultationsResult.value : [];
+        consultationsList.innerHTML = consultations.length
+          ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Patient</th><th>Diagnosis</th></tr></thead><tbody>
+              ${consultations.slice(0, 5).map(consultation => `<tr>
+                <td>${escapeClinicalHtml(formatDate(consultation.ConsultationDate))}</td>
+                <td>${escapeClinicalHtml([consultation.PatientFirstName, consultation.PatientLastName].filter(Boolean).join(' ') || '—')}</td>
+                <td>${escapeClinicalHtml(consultation.DiagnosisSummary || '—')}</td>
+              </tr>`).join('')}
+            </tbody></table></div>`
+          : emptyState('No consultations recorded yet.');
+      } else {
+        consultationsList.innerHTML = emptyState(`Unable to load consultations: ${escapeClinicalHtml(apiErrorMessage(consultationsResult.reason))}`);
+      }
+    }
+
+    loadClinicalDashboard();
+    document.getElementById('refresh-clinical-dashboard').addEventListener('click', loadClinicalDashboard);
+    window.addEventListener('pageshow', event => {
+      if (event.persisted) loadClinicalDashboard();
+    });
+  </script>
+</body>
+</html>

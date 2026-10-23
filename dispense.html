@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dispense Medication — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">
+      <h2 class="page-title">Dispense Medication</h2>
+      <p class="page-desc">Pharmacist dispenses medication prescribed by the doctor. Inventory is adjusted. Search by patient if needed.</p>
+      <div id="form-banner" class="banner"></div>
+      <div class="card">
+        <label for="search">Search by patient name or contact</label>
+        <input type="text" id="search" placeholder="Optional filter…">
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Pending prescriptions</h3></div>
+        <div id="list"></div>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = ['
+    const s = Session.requireLogin(['Pharmacist']);
+    if (!s) throw new Error('redirect');
+    renderChrome('dispense.html');
+    function render(filter = '') {
+      const db = DB.load();
+      let pending = db.Prescriptions.filter(p => p.DispenseType === 'Prescribed' && !p.DispensedDate);
+      if (filter) {
+        const q = filter.toLowerCase();
+        pending = pending.filter(p => {
+          const c = db.Consultations.find(x => x.Consultation_ID === p.Consultation_ID);
+          const a = c ? db.Appointments.find(x => x.Appointment_ID === c.Appointment_ID) : null;
+          const pat = a ? db.Patients.find(x => x.Patient_ID === a.Patient_ID) : null;
+          if (!pat) return false;
+          return (pat.FirstName + ' ' + pat.LastName).toLowerCase().includes(q) || pat.ContactNumber.includes(q);
+        });
+      }
+      const el = document.getElementById('list');
+      if (!pending.length) { el.innerHTML = emptyState('No pending prescriptions to dispense.'); return; }
+      el.innerHTML = `<div class="table-wrap"><table>
+        <thead><tr><th>Date</th><th>Patient</th><th>Medication</th><th>Dosage</th><th>Qty</th><th></th></tr></thead>
+        <tbody>${pending.map(p => {
+          const inv = db.Inventory.find(i => i.Inventory_ID === p.Inventory_ID);
+          const c = db.Consultations.find(x => x.Consultation_ID === p.Consultation_ID);
+          const a = c ? db.Appointments.find(x => x.Appointment_ID === c.Appointment_ID) : null;
+          const pat = a ? db.Patients.find(x => x.Patient_ID === a.Patient_ID) : null;
+          return `<tr>
+            <td>${formatDate(p.PrescribedDate.slice(0,10))}</td>
+            <td>${pat ? pat.FirstName + ' ' + pat.LastName : '—'}</td>
+            <td>${inv ? inv.MedicationName + ' ' + inv.Concentration : '—'}</td>
+            <td>${p.Dosage} · ${p.Frequency}</td>
+            <td class="mono">${p.QuantityDispensed || 1}</td>
+            <td><button class="btn btn-sm btn-primary dispense-btn" data-id="${p.Prescription_ID}">Dispense</button></td>
+          </tr>`;
+        }).join('')}</tbody></table></div>`;
+      el.querySelectorAll('.dispense-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const d = DB.load();
+          const rx = d.Prescriptions.find(x => x.Prescription_ID === parseInt(btn.dataset.id, 10));
+          if (!rx) return;
+          const inv = d.Inventory.find(i => i.Inventory_ID === rx.Inventory_ID);
+          const qty = rx.QuantityDispensed || 1;
+          if (inv && inv.StockQuantity < qty) {
+            showBanner('form-banner', 'Medication prescribed not available in sufficient quantity (alternative flow).', 'error');
+            toast('Insufficient stock.', 'error'); return;
+          }
+          if (inv) { inv.StockQuantity -= qty; inv.LastUpdated = nowISO(); }
+          rx.DispenseType = 'Given'; rx.DispensedDate = nowISO();
+          DB.save(d);
+          DB.logAudit(s.UserType, s.User_ID, 'Action', 'MedicationDispensed', { table: 'Prescription', recordId: rx.Prescription_ID });
+          toast('Medication dispensed. Inventory adjusted.', 'success');
+          render(document.getElementById('search').value);
+        });
+      });
+    }
+    render();
+    document.getElementById('search').addEventListener('input', e => render(e.target.value));
+  </script>
+</body>
+</html>

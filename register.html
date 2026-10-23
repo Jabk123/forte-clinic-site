@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Register Account — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="auth-split">
+    <div class="auth-visual">
+      <div class="auth-visual-inner">
+        <svg class="visual-icon" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="32" cy="22" r="10"/>
+          <path d="M12 54c0-11 9-20 20-20s20 9 20 20"/>
+          <path d="M32 8v4M32 52v4M8 32h4M52 32h4"/>
+        </svg>
+        <h2>Register Account</h2>
+        <p>Patients create an account by completing a registration form . Your details are stored securely so you can book appointments and access your clinic records.</p>
+        <p style="margin-top:20px;font-size:0.95rem;opacity:0.85">Already registered? <a href="login.html" style="color:#fff;text-decoration:underline">Login</a></p>
+      </div>
+    </div>
+    <div class="auth-form-side">
+      <div class="form-card">
+        <div class="breadcrumb">REGISTER</div>
+        <h2 class="page-title">Create your account</h2>
+        <p class="page-desc" style="margin-bottom:18px">Fill in the required details. Staff accounts are registered by Admin .</p>
+        <div id="form-banner" class="banner"></div>
+        <form id="reg-form" novalidate>
+          <div class="grid-2">
+            <div>
+              <label for="firstName">First name <span class="req">*</span></label>
+              <input type="text" id="firstName" autocomplete="given-name">
+              <div class="field-error" id="err-first"></div>
+            </div>
+            <div>
+              <label for="lastName">Last name <span class="req">*</span></label>
+              <input type="text" id="lastName" autocomplete="family-name">
+              <div class="field-error" id="err-last"></div>
+            </div>
+          </div>
+          <label for="email">Email address <span class="req">*</span></label>
+          <input type="email" id="email" autocomplete="email" placeholder="you@example.com">
+          <div class="field-error" id="err-email"></div>
+          <label for="phone">Contact number <span class="req">*</span></label>
+          <input type="tel" id="phone" autocomplete="tel" placeholder="0731234567">
+          <div class="hint">South African format: 0 + 9 digits</div>
+          <div class="field-error" id="err-phone"></div>
+          <label for="dob">Date of birth <span class="req">*</span></label>
+          <input type="date" id="dob">
+          <div class="field-error" id="err-dob"></div>
+          <label for="gender">Gender <span class="req">*</span></label>
+          <select id="gender">
+            <option value="">Select…</option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Other">Other</option>
+          </select>
+          <div class="field-error" id="err-gender"></div>
+          <label for="address">Residential address <span class="req">*</span></label>
+          <input type="text" id="address" placeholder="Street, suburb, city, code">
+          <div class="field-error" id="err-address"></div>
+          <label for="emergency">Emergency contact number</label>
+          <input type="tel" id="emergency" placeholder="Optional">
+          <label for="password">Password <span class="req">*</span></label>
+          <input type="password" id="password" autocomplete="new-password" placeholder="Min. 8 characters, letter and number">
+          <div class="field-error" id="err-password"></div>
+          <label for="confirm">Confirm password <span class="req">*</span></label>
+          <input type="password" id="confirm" autocomplete="new-password">
+          <div class="field-error" id="err-confirm"></div>
+          <div class="btn-row">
+            <button type="submit" class="btn btn-primary">Submit registration</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = [
+      'Complete the form to create a patient account.',
+      'You will be signed in automatically after registration.'
+    ];
+    renderChrome();
+    if (Session.get()) window.location.href = ROLE_HOME[Session.get().Role] || 'index.html';
+
+    const fields = {
+      firstName: document.getElementById('first'),
+      lastName: document.getElementById('last'),
+      email: document.getElementById('email'),
+      phone: document.getElementById('phone'),
+      dob: document.getElementById('dob'),
+      gender: document.getElementById('gender'),
+      address: document.getElementById('address'),
+      password: document.getElementById('password'),
+      confirm: document.getElementById('confirm')
+    };
+    // Support either id="first" or id="firstName" style
+    if (!fields.firstName) fields.firstName = document.getElementById('firstName');
+    if (!fields.lastName) fields.lastName = document.getElementById('lastName');
+
+    const checks = {
+      firstName: bindField(fields.firstName, document.getElementById('err-first'), v => Validate.minLen(v, 2), 'Enter your first name.'),
+      lastName: bindField(fields.lastName, document.getElementById('err-last'), v => Validate.minLen(v, 2), 'Enter your last name.'),
+      email: bindField(fields.email, document.getElementById('err-email'), v => Validate.email(v), 'Enter a valid email address.'),
+      phone: bindField(fields.phone, document.getElementById('err-phone'), v => Validate.phone(v), 'Enter a valid 10-digit SA number starting with 0.'),
+      dob: bindField(fields.dob, document.getElementById('err-dob'), v => Validate.notEmpty(v), 'Date of birth is required.'),
+      gender: bindField(fields.gender, document.getElementById('err-gender'), v => Validate.notEmpty(v), 'Please select a gender.'),
+      address: bindField(fields.address, document.getElementById('err-address'), v => Validate.minLen(v, 8), 'Enter a full residential address.'),
+      password: bindField(fields.password, document.getElementById('err-password'), v => Validate.password(v), 'Min. 8 characters with at least one letter and one number.'),
+      confirm: bindField(fields.confirm, document.getElementById('err-confirm'), v => v === fields.password.value && Validate.notEmpty(v), 'Passwords do not match.')
+    };
+
+    document.getElementById('reg-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      let allOk = true;
+      Object.values(checks).forEach(fn => { if (!fn()) allOk = false; });
+      if (!allOk) { showBanner('form-banner', 'Please correct the highlighted fields.', 'error'); return; }
+
+      const btn = e.target.querySelector('button[type=submit]');
+      if (btn) { btn.disabled = true; btn.textContent = 'Creating account…'; }
+
+      try {
+        const payload = {
+          FirstName: fields.firstName.value.trim(),
+          LastName: fields.lastName.value.trim(),
+          ContactNumber: fields.phone.value.replace(/\s/g, ''),
+          Email: fields.email.value.trim().toLowerCase(),
+          Password: fields.password.value,
+          DateOfBirth: fields.dob.value || null,
+          Gender: fields.gender.value || null,
+          EmergencyContact: (document.getElementById('emergency') || {}).value
+            ? document.getElementById('emergency').value.replace(/\s/g, '')
+            : null,
+          Address: fields.address.value.trim() || null
+        };
+        const result = await DB.registerPatient(payload);
+        const user = result.user || result;
+        if (result.token) user.Token = result.token;
+        Session.set(user, 'Patient', false);
+        toast('Account created. Welcome, ' + user.FirstName + '.', 'success');
+        setTimeout(() => { window.location.href = 'patient-dashboard.html'; }, 500);
+      } catch (err) {
+        showBanner('form-banner', apiErrorMessage(err), 'error');
+        if (btn) { btn.disabled = false; btn.textContent = 'Submit registration'; }
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pharmacy Inventory — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">PHARMACY · INVENTORY</div>
+      <h2 class="page-title">Medication inventory</h2>
+      <p class="page-desc">Stock levels, near-expiry items and reorder alerts.</p>
+
+      <div class="grid-3" id="stats"></div>
+
+      <div class="card">
+        <div class="card-head">
+          <h3>Current stock</h3>
+        </div>
+        <div id="stock-list"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Pending prescriptions (Prescribed)</h3></div>
+        <div id="rx-list"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = [
+      'Items at or below reorder level are highlighted.',
+      'Medications expiring within 30 days show an amber badge.',
+      'Dispensing from a “Prescribed” script reduces stock and marks the prescription as given.'
+    ];
+    const s = Session.requireLogin(['Pharmacist', 'Admin', 'Doctor', 'Nurse']);
+    if (!s) throw new Error('redirect');
+    renderChrome('pharmacy.html');
+
+    function render() {
+      const db = DB.load();
+      const low = db.Inventory.filter((i) => i.StockQuantity <= i.ReorderLevel);
+      const expiring = db.Inventory.filter((i) => {
+        const days = (new Date(i.ExpiryDate) - new Date()) / (1000 * 60 * 60 * 24);
+        return days <= 30 && days >= 0;
+      });
+
+      document.getElementById('stats').innerHTML = `
+        <div class="stat"><div class="num">${db.Inventory.length}</div><div class="label">Medications</div></div>
+        <div class="stat"><div class="num">${low.length}</div><div class="label">Below reorder</div></div>
+        <div class="stat"><div class="num">${expiring.length}</div><div class="label">Expiring ≤30 days</div></div>
+      `;
+
+      const stockEl = document.getElementById('stock-list');
+      stockEl.innerHTML = `<div class="table-wrap"><table>
+        <thead><tr><th>Medication</th><th>Type</th><th>Stock</th><th>Unit price</th><th>Expiry</th><th>Status</th></tr></thead>
+        <tbody>${db.Inventory.map((i) => {
+          const days = (new Date(i.ExpiryDate) - new Date()) / (1000 * 60 * 60 * 24);
+          let status = '';
+          if (i.StockQuantity <= i.ReorderLevel) status += statusBadge('Low stock') + ' ';
+          if (days <= 30 && days >= 0) status += statusBadge('Expiring');
+          if (days < 0) status += statusBadge('Expired');
+          return `<tr>
+            <td><strong>${i.MedicationName}</strong><br><span class="mono" style="font-size:.8rem">${i.Concentration}</span></td>
+            <td>${i.MedicationType}</td>
+            <td class="mono">${i.StockQuantity}</td>
+            <td class="mono">${formatCurrency(i.UnitPrice)}</td>
+            <td>${formatDate(i.ExpiryDate)}</td>
+            <td>${status || '—'}</td>
+          </tr>`;
+        }).join('')}</tbody></table></div>`;
+
+      const pending = db.Prescriptions.filter((p) => p.DispenseType === 'Prescribed' && !p.DispensedDate);
+      const rxEl = document.getElementById('rx-list');
+      if (!pending.length) {
+        rxEl.innerHTML = emptyState('No pending prescriptions to dispense.');
+      } else {
+        rxEl.innerHTML = `<div class="table-wrap"><table>
+          <thead><tr><th>Date</th><th>Medication</th><th>Dosage</th><th>Qty</th><th></th></tr></thead>
+          <tbody>${pending.map((p) => {
+            const inv = db.Inventory.find((i) => i.Inventory_ID === p.Inventory_ID);
+            return `<tr>
+              <td>${formatDate(p.PrescribedDate.slice(0,10))}</td>
+              <td>${inv ? inv.MedicationName + ' ' + inv.Concentration : '—'}</td>
+              <td>${p.Dosage} · ${p.Frequency}</td>
+              <td class="mono">${p.QuantityDispensed || 1}</td>
+              <td><button class="btn btn-sm btn-primary dispense-btn" data-id="${p.Prescription_ID}">Dispense</button></td>
+            </tr>`;
+          }).join('')}</tbody></table></div>`;
+
+        rxEl.querySelectorAll('.dispense-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const d = DB.load();
+            const rx = d.Prescriptions.find((x) => x.Prescription_ID === parseInt(btn.dataset.id, 10));
+            if (!rx) return;
+            const inv = d.Inventory.find((i) => i.Inventory_ID === rx.Inventory_ID);
+            const qty = rx.QuantityDispensed || 1;
+            if (inv && inv.StockQuantity < qty) {
+              toast('Insufficient stock.', 'error');
+              return;
+            }
+            if (inv) {
+              inv.StockQuantity -= qty;
+              inv.LastUpdated = nowISO();
+            }
+            rx.DispenseType = 'Given';
+            rx.DispensedDate = nowISO();
+            DB.save(d);
+            DB.logAudit(s.UserType, s.User_ID, 'Action', 'PrescriptionDispensed', {
+              table: 'Prescription', recordId: rx.Prescription_ID
+            });
+            toast('Medication dispensed.', 'success');
+            render();
+          });
+        });
+      }
+    }
+    render();
+  </script>
+</body>
+</html>

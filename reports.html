@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generate Reports — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">REPORTS</div>
+      <h2 class="page-title">Generate Reports</h2>
+      <p class="page-desc">Manager selects report type, filters details, and can print/export the report.</p>
+      <div class="card">
+        <div class="card-head"><h3>Report form</h3></div>
+        <label for="rtype">Report type</label>
+        <select id="rtype">
+          <option value="appointments">Appointments by status</option>
+          <option value="payments">Payments summary</option>
+          <option value="consultations">Consultations</option>
+          <option value="inventory">Inventory levels</option>
+        </select>
+        <label for="from">From date (optional)</label>
+        <input type="date" id="from">
+        <label for="to">To date (optional)</label>
+        <input type="date" id="to">
+        <div class="btn-row">
+          <button type="button" class="btn btn-primary" id="run">Retrieve report</button>
+          <button type="button" class="btn btn-ghost" id="print">Print report</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Report details</h3></div>
+        <div id="out"></div>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = ['Select a report type and optional date range.'];
+    const s = Session.requireLogin(['Manager', 'Admin']);
+    if (!s) throw new Error('redirect');
+    renderChrome('reports.html');
+    function runReport() {
+      const db = DB.load();
+      const type = document.getElementById('rtype').value;
+      const from = document.getElementById('from').value;
+      const to = document.getElementById('to').value;
+      const el = document.getElementById('out');
+      if (type === 'appointments') {
+        let rows = db.Appointments;
+        if (from) rows = rows.filter(a => a.AppointmentDate >= from);
+        if (to) rows = rows.filter(a => a.AppointmentDate <= to);
+        const statuses = {};
+        rows.forEach(a => { statuses[a.AppointmentStatus] = (statuses[a.AppointmentStatus] || 0) + 1; });
+        el.innerHTML = Object.keys(statuses).length
+          ? `<div class="table-wrap"><table><thead><tr><th>Status</th><th>Count</th></tr></thead>
+             <tbody>${Object.entries(statuses).map(([k,v]) => `<tr><td>${statusBadge(k)}</td><td class="mono">${v}</td></tr>`).join('')}</tbody></table></div>`
+          : emptyState('No data for selected filters.');
+      } else if (type === 'payments') {
+        let rows = db.Payments;
+        if (from) rows = rows.filter(p => p.PaymentDate >= from);
+        if (to) rows = rows.filter(p => p.PaymentDate <= to);
+        const total = rows.filter(p => p.IsPaid === 'Yes').reduce((s, p) => s + p.PaymentAmount, 0);
+        el.innerHTML = `<p><strong>Collected:</strong> ${formatCurrency(total)} · <strong>Records:</strong> ${rows.length}</p>
+          <div class="table-wrap"><table><thead><tr><th>Date</th><th>Service</th><th>Amount</th><th>Status</th></tr></thead>
+          <tbody>${rows.map(p => `<tr><td>${formatDate(p.PaymentDate)}</td><td>${p.ServiceName}</td><td class="mono">${formatCurrency(p.ServicePrice)}</td><td>${statusBadge(p.IsPaid)}</td></tr>`).join('')}</tbody></table></div>`;
+      } else if (type === 'consultations') {
+        el.innerHTML = `<p><strong>Total consultations:</strong> ${db.Consultations.length}</p>` +
+          (db.Consultations.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Duration</th><th>Severity</th></tr></thead>
+          <tbody>${db.Consultations.map(c => `<tr><td>${formatDate(c.ConsultationDate.slice(0,10))}</td><td>${c.ConsultationDuration} min</td><td>${c.SeverityStatus ? statusBadge(c.SeverityStatus) : '—'}</td></tr>`).join('')}</tbody></table></div>` : emptyState('No consultations yet.'));
+      } else {
+        el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Medication</th><th>Stock</th><th>Reorder</th><th>Expiry</th></tr></thead>
+          <tbody>${db.Inventory.map(i => `<tr><td>${i.MedicationName} ${i.Concentration}</td><td class="mono">${i.StockQuantity}</td><td class="mono">${i.ReorderLevel}</td><td>${formatDate(i.ExpiryDate)}</td></tr>`).join('')}</tbody></table></div>`;
+      }
+    }
+    document.getElementById('run').addEventListener('click', runReport);
+    document.getElementById('print').addEventListener('click', () => window.print());
+    runReport();
+  </script>
+</body>
+</html>

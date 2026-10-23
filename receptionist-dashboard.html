@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Reception Dashboard — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">RECEPTION · DASHBOARD</div>
+      <h2 class="page-title">Front desk</h2>
+      <p class="page-desc">Patient details, appointments and payments.</p>
+      <div class="grid-3" id="stats"></div>
+      <div class="card">
+        <div class="card-head"><h3>Quick actions</h3></div>
+        <div class="btn-row" style="margin-top:0">
+          <a class="btn btn-primary" href="patient-details.html">Manage patients</a>
+          <a class="btn btn-ghost" href="appointment.html">Book appointment</a>
+          <a class="btn btn-ghost" href="payment.html">Record payment</a>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    const s = Session.requireLogin(['Receptionist']);
+    if (!s) throw new Error('redirect');
+    renderChrome('receptionist-dashboard.html');
+    (async function () {
+      const stats = document.getElementById('stats');
+      stats.innerHTML = '<p class="hint">Loading reception overview…</p>';
+      const [patientsResult, appointmentsResult] = await Promise.allSettled([
+        DB.getPatients(),
+        DB.getAppointments()
+      ]);
+      const activePatients = patientsResult.status === 'fulfilled'
+        ? (Array.isArray(patientsResult.value) ? patientsResult.value : [])
+          .filter(patient => patient.IsActive === true || Number(patient.IsActive) === 1).length
+        : null;
+      const appointments = appointmentsResult.status === 'fulfilled' && Array.isArray(appointmentsResult.value)
+        ? appointmentsResult.value
+        : null;
+      const scheduledCount = appointments
+        ? appointments.filter(appointment =>
+          (String(appointment.Status || appointment.AppointmentStatus || '').trim() || 'scheduled').toLowerCase() === 'scheduled'
+        ).length
+        : null;
+      const errors = [];
+      if (patientsResult.status === 'rejected') errors.push(`Patients: ${apiErrorMessage(patientsResult.reason)}`);
+      if (appointmentsResult.status === 'rejected') errors.push(`Appointments: ${apiErrorMessage(appointmentsResult.reason)}`);
+      const escapedErrors = errors.join(' ').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+      stats.innerHTML = `
+        <div class="stat"><div class="num">${activePatients == null ? '—' : activePatients}</div><div class="label">Active patients</div></div>
+        <div class="stat"><div class="num">${scheduledCount == null ? '—' : scheduledCount}</div><div class="label">Scheduled</div></div>
+        <div class="stat"><div class="num">${appointments == null ? '—' : appointments.length}</div><div class="label">All appointments</div></div>
+        ${errors.length ? `<div class="card" style="grid-column:1/-1">${emptyState(escapedErrors)}</div>` : ''}`;
+    })();
+  </script>
+</body>
+</html>

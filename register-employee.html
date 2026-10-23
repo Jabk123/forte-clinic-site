@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Register Employee — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">ADMIN · REGISTER EMPLOYEE</div>
+      <h2 class="page-title">Register Employee</h2>
+      <p class="page-desc">Onboard new staff. Use an email address not already assigned to a patient or employee account.</p>
+      <div id="form-banner" class="banner"></div>
+      <div class="card">
+        <form id="emp-form" novalidate>
+          <div class="grid-2">
+            <div>
+              <label for="firstName">First name <span class="req">*</span></label>
+              <input type="text" id="firstName">
+              <div class="field-error" id="err-first"></div>
+            </div>
+            <div>
+              <label for="lastName">Last name <span class="req">*</span></label>
+              <input type="text" id="lastName">
+              <div class="field-error" id="err-last"></div>
+            </div>
+          </div>
+          <label for="email">Email <span class="req">*</span></label>
+          <input type="email" id="email">
+          <div class="field-error" id="err-email"></div>
+          <label for="phone">Contact number <span class="req">*</span></label>
+          <input type="tel" id="phone" placeholder="0731234567">
+          <div class="field-error" id="err-phone"></div>
+          <label for="type">Employee type <span class="req">*</span></label>
+          <select id="type">
+            <option value="">Select…</option>
+            <option value="Doctor">Doctor</option>
+            <option value="Nurse">Nurse</option>
+            <option value="Pharmacist">Pharmacist</option>
+            <option value="Receptionist">Receptionist</option>
+            <option value="Manager">Manager</option>
+            <option value="Admin">Admin</option>
+          </select>
+          <div class="field-error" id="err-type"></div>
+          <label for="hpcsa">HPCSA number (if applicable)</label>
+          <input type="text" id="hpcsa">
+          <label for="address">Address <span class="req">*</span></label>
+          <input type="text" id="address">
+          <div class="field-error" id="err-address"></div>
+          <label for="password">Temporary password <span class="req">*</span></label>
+          <input type="text" id="password" value="Staff@123">
+          <div class="field-error" id="err-password"></div>
+          <div class="btn-row">
+            <button type="submit" class="btn btn-primary" id="submit-btn">Submit registration</button>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = [
+      'All fields marked with * are required.',
+      'The temporary password can be changed after the employee signs in.'
+    ];
+    const s = Session.requireLogin(['Admin']);
+    if (!s) throw new Error('redirect');
+    renderChrome('register-employee.html');
+
+    const checks = {
+      firstName: bindField(document.getElementById('firstName'), document.getElementById('err-first'), v => Validate.minLen(v, 2), 'Required'),
+      lastName: bindField(document.getElementById('lastName'), document.getElementById('err-last'), v => Validate.minLen(v, 2), 'Required'),
+      email: bindField(document.getElementById('email'), document.getElementById('err-email'), v => Validate.email(v), 'Valid email required'),
+      phone: bindField(document.getElementById('phone'), document.getElementById('err-phone'), v => Validate.phone(v), 'Valid SA number required'),
+      type: bindField(document.getElementById('type'), document.getElementById('err-type'), v => Validate.notEmpty(v), 'Select employee type'),
+      address: bindField(document.getElementById('address'), document.getElementById('err-address'), v => Validate.minLen(v, 8), 'Address required'),
+      password: bindField(document.getElementById('password'), document.getElementById('err-password'), v => Validate.password(v), 'Min 8 chars with letter & number')
+    };
+
+    document.getElementById('emp-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      let ok = true;
+      Object.values(checks).forEach(fn => { if (!fn()) ok = false; });
+      if (!ok) {
+        showBanner('form-banner', 'Please fix highlighted fields.', 'error');
+        return;
+      }
+      const btn = document.getElementById('submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      try {
+        const payload = {
+          FirstName: document.getElementById('firstName').value.trim(),
+          LastName: document.getElementById('lastName').value.trim(),
+          Email: document.getElementById('email').value.trim().toLowerCase(),
+          ContactNumber: document.getElementById('phone').value.replace(/\s/g, ''),
+          EmployeeType: document.getElementById('type').value,
+          HPCSANumber: document.getElementById('hpcsa').value.trim() || null,
+          Address: document.getElementById('address').value.trim(),
+          Password: document.getElementById('password').value
+        };
+        await DB.registerEmployee(payload);
+        showBanner('form-banner', 'Employee registered successfully.', 'success');
+        toast('Employee registered.', 'success');
+        e.target.reset();
+        document.getElementById('password').value = 'Staff@123';
+      } catch (err) {
+        showBanner('form-banner', apiErrorMessage(err), 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Submit registration';
+      }
+    });
+  </script>
+</body>
+</html>

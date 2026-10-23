@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manage Accounts — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">ADMIN · MANAGE ACCOUNTS</div>
+      <h2 class="page-title">Manage Accounts</h2>
+      <p class="page-desc">Activate or deactivate patient and staff accounts.</p>
+      <div class="card">
+        <div class="card-head"><h3>Patients</h3></div>
+        <div id="patients"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Employees</h3></div>
+        <div id="employees"></div>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = [
+      'Use Activate / Deactivate to control sign-in access.',
+      'Deactivated accounts cannot log in until reactivated.'
+    ];
+    const s = Session.requireLogin(['Admin']);
+    if (!s) throw new Error('redirect');
+    renderChrome('manage-accounts.html');
+
+    async function load() {
+      const pEl = document.getElementById('patients');
+      const eEl = document.getElementById('employees');
+      try {
+        const [patients, employees] = await Promise.all([DB.getPatients(), DB.getEmployees()]);
+        const plist = Array.isArray(patients) ? patients : [];
+        const elist = Array.isArray(employees) ? employees : [];
+
+        pEl.innerHTML = plist.length
+          ? `<div class="table-wrap"><table>
+              <thead><tr><th>Name</th><th>Email</th><th>Status</th><th></th></tr></thead>
+              <tbody>${plist.map(p => `<tr>
+                <td>${p.FirstName} ${p.LastName}</td>
+                <td class="mono">${p.Email}</td>
+                <td>${p.IsActive ? statusBadge('Yes') : statusBadge('No')}</td>
+                <td><button type="button" class="btn btn-sm btn-ghost toggle" data-type="Patient" data-id="${p.Patient_ID}" data-active="${p.IsActive ? '1' : '0'}">${p.IsActive ? 'Deactivate' : 'Activate'}</button></td>
+              </tr>`).join('')}</tbody></table></div>`
+          : emptyState('No patients found.');
+
+        eEl.innerHTML = elist.length
+          ? `<div class="table-wrap"><table>
+              <thead><tr><th>Name</th><th>Role</th><th>Email</th><th>Status</th><th></th></tr></thead>
+              <tbody>${elist.map(e => `<tr>
+                <td>${e.FirstName} ${e.LastName}</td>
+                <td>${e.EmployeeType || '—'}</td>
+                <td class="mono">${e.Email}</td>
+                <td>${e.IsActive ? statusBadge('Yes') : statusBadge('No')}</td>
+                <td><button type="button" class="btn btn-sm btn-ghost toggle" data-type="Employee" data-id="${e.Employee_ID}" data-active="${e.IsActive ? '1' : '0'}">${e.IsActive ? 'Deactivate' : 'Activate'}</button></td>
+              </tr>`).join('')}</tbody></table></div>`
+          : emptyState('No employees found.');
+
+        document.querySelectorAll('.toggle').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const type = btn.getAttribute('data-type');
+            const id = btn.getAttribute('data-id');
+            const active = btn.getAttribute('data-active') === '1';
+            btn.disabled = true;
+            try {
+              await DB.setAccountActive(type, id, !active);
+              toast(active ? 'Account deactivated.' : 'Account activated.', 'success');
+              await load();
+            } catch (err) {
+              toast(apiErrorMessage(err), 'error');
+              btn.disabled = false;
+            }
+          });
+        });
+      } catch (err) {
+        pEl.innerHTML = emptyState(apiErrorMessage(err));
+        eEl.innerHTML = '';
+      }
+    }
+    load();
+  </script>
+</body>
+</html>

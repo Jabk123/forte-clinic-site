@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pharmacy Dashboard — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">PHARMACY · DASHBOARD</div>
+      <h2 class="page-title">Pharmacy overview</h2>
+      <p class="page-desc">Inventory status and dispensing queue.</p>
+      <div class="grid-3" id="stats"></div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Quick actions</h3>
+        </div>
+        <div class="btn-row" style="margin-top:0">
+          <a class="btn btn-primary" href="pharmacy.html">Manage inventory</a>
+          <a class="btn btn-ghost" href="dispense.html">Dispense medication</a>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    const s = Session.requireLogin(['Pharmacist']);
+    if (!s) throw new Error('redirect');
+    renderChrome('pharmacist-dashboard.html');
+    (async function () {
+      const stats = document.getElementById('stats');
+      try {
+        const inv = await DB.getInventory();
+        const items = Array.isArray(inv) ? inv : [];
+        const low = items.filter(i => Number(i.StockQuantity) <= Number(i.ReorderLevel || 0));
+        stats.innerHTML = `
+          <div class="stat"><div class="num">${items.length}</div><div class="label">Medications</div></div>
+          <div class="stat"><div class="num">${low.length}</div><div class="label">Low stock</div></div>
+          <div class="stat"><div class="num">${items.reduce((s, i) => s + Number(i.StockQuantity || 0), 0)}</div><div class="label">Total units</div></div>`;
+      } catch (err) {
+        stats.innerHTML = `<div class="card" style="grid-column:1/-1">${emptyState(apiErrorMessage(err))}</div>`;
+      }
+    })();
+  </script>
+</body>
+</html>

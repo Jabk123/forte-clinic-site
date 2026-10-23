@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>System Metrics — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">ADMIN · SYSTEM METRICS</div>
+      <h2 class="page-title">System Metrics</h2>
+      <p class="page-desc">Overview of clinic activity and audit events.</p>
+      <div class="grid-3" id="stats"></div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Audit log</h3>
+          <select id="filter" style="width:auto;min-width:160px">
+            <option value="">All categories</option>
+            <option value="Login">Login</option>
+            <option value="Action">Action</option>
+            <option value="Notification">Notification</option>
+          </select>
+        </div>
+        <div id="audit"></div>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = [
+      'Metrics summarise active users and scheduled appointments.',
+      'Filter the audit log by category when needed.'
+    ];
+    const s = Session.requireLogin(['Admin']);
+    if (!s) throw new Error('redirect');
+    renderChrome('metrics.html');
+
+    let allLogs = [];
+
+    function escapeAuditHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+    }
+
+    function renderAudit(cat) {
+      let logs = allLogs.slice();
+      if (cat) logs = logs.filter(l => l.EventCategory === cat);
+      const el = document.getElementById('audit');
+      if (!logs.length) {
+        el.innerHTML = emptyState('No audit events found.');
+        return;
+      }
+      el.innerHTML = `<div class="table-wrap"><table>
+        <thead><tr><th>Time</th><th>User</th><th>Category</th><th>Action</th><th>Details</th></tr></thead>
+        <tbody>${logs.slice(0, 50).map(l => {
+          const t = l.EventTime ? String(l.EventTime).replace('T', ' ').slice(0, 19) : '—';
+          return `<tr>
+            <td class="mono" style="font-size:0.85rem">${escapeAuditHtml(t)}</td>
+            <td>${escapeAuditHtml(l.UserType || '—')} ${l.User_ID != null ? '#' + escapeAuditHtml(l.User_ID) : ''}</td>
+            <td>${escapeAuditHtml(l.EventCategory || '—')}</td>
+            <td>${escapeAuditHtml(l.ActionType || '—')}</td>
+            <td>${escapeAuditHtml(l.EventDetails || '—')}</td>
+          </tr>`;
+        }).join('')}</tbody></table></div>`;
+    }
+
+    (async function () {
+      const stats = document.getElementById('stats');
+      const [metricsResult, auditResult] = await Promise.allSettled([
+        DB.getMetrics(),
+        API.get('/audit')
+      ]);
+
+      if (metricsResult.status === 'fulfilled') {
+        const metrics = metricsResult.value;
+        stats.innerHTML = `
+          <div class="stat"><div class="num">${metrics.activePatients ?? '—'}</div><div class="label">Active patients</div></div>
+          <div class="stat"><div class="num">${metrics.activeEmployees ?? '—'}</div><div class="label">Active staff</div></div>
+          <div class="stat"><div class="num">${metrics.scheduledAppointments ?? '—'}</div><div class="label">Scheduled appointments</div></div>`;
+      } else {
+        stats.innerHTML = `<div class="card" style="grid-column:1/-1">${emptyState(escapeAuditHtml(apiErrorMessage(metricsResult.reason)))}</div>`;
+      }
+
+      if (auditResult.status === 'fulfilled') {
+        allLogs = Array.isArray(auditResult.value) ? auditResult.value : [];
+        renderAudit('');
+      } else {
+        document.getElementById('audit').innerHTML =
+          emptyState(escapeAuditHtml(`Unable to load audit log: ${apiErrorMessage(auditResult.reason)}`));
+      }
+      document.getElementById('filter').addEventListener('change', e => renderAudit(e.target.value));
+    })();
+  </script>
+</body>
+</html>

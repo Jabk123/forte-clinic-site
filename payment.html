@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Payment — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">PAYMENT</div>
+      <h2 class="page-title">Payment</h2>
+      <p class="page-desc">Receptionist verifies and bills the patient for services offered by the clinic. Patient indicates cash or medical aid.</p>
+      <div id="form-banner" class="banner"></div>
+      <div class="card">
+        <div class="card-head"><h3>Record payment</h3></div>
+        <form id="pay-form" novalidate>
+          <label for="patientId">Patient <span class="req">*</span></label>
+          <select id="patientId"></select>
+          <div class="grid-2">
+            <div>
+              <label for="service">Service name <span class="req">*</span></label>
+              <input type="text" id="service" list="service-list" placeholder="General Consultation">
+              <datalist id="service-list">
+                <option value="General Consultation"><option value="Chronic Follow-up"><option value="Minor Procedure"><option value="Wound Dressing">
+              </datalist>
+            </div>
+            <div>
+              <label for="price">Service price (R) <span class="req">*</span></label>
+              <input type="number" id="price" step="0.01" min="0">
+            </div>
+          </div>
+          <div class="grid-2">
+            <div>
+              <label for="ptype">Payment type <span class="req">*</span></label>
+              <select id="ptype">
+                <option value="Cash">Cash</option>
+                <option value="Card">Card</option>
+                <option value="MedicalAid">Medical Aid</option>
+              </select>
+            </div>
+            <div>
+              <label for="paid">Is paid?</label>
+              <select id="paid">
+                <option value="No">No — fee due</option>
+                <option value="Yes">Yes — payment received</option>
+              </select>
+            </div>
+          </div>
+          <div class="btn-row"><button type="submit" class="btn btn-primary">Submit payment</button></div>
+        </form>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Payment records</h3></div>
+        <div id="list"></div>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = ['Record payments for clinic services.'];
+    const s = Session.requireLogin(['Receptionist']);
+    if (!s) throw new Error('redirect');
+    renderChrome('payment.html');
+    const patientSelect = document.getElementById('patientId');
+    const paymentList = document.getElementById('list');
+    const paymentForm = document.getElementById('pay-form');
+    const submitButton = paymentForm.querySelector('button[type="submit"]');
+    let hasActivePatients = false;
+
+    function escapePaymentHtml(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+    }
+
+    async function loadPayments() {
+      paymentList.innerHTML = '<p class="hint">Loading payment records…</p>';
+      try {
+        const payments = await DB.getPayments();
+        const rows = Array.isArray(payments) ? payments : [];
+        if (!rows.length) {
+          paymentList.innerHTML = emptyState('No payment records.');
+          return;
+        }
+        paymentList.innerHTML = `<div class="table-wrap"><table>
+          <thead><tr><th>Date</th><th>Patient</th><th>Service</th><th>Amount</th><th>Type</th><th>Status</th><th></th></tr></thead>
+          <tbody>${rows.map(payment => {
+            const paid = String(payment.IsPaid).toLowerCase() === 'yes';
+            const paymentType = payment.PaymentType === 'MedicalAid' ? 'Medical Aid' : payment.PaymentType || '—';
+            return `<tr>
+              <td>${escapePaymentHtml(formatDate(payment.PaymentDate))}</td>
+              <td>${escapePaymentHtml([payment.PatientFirstName, payment.PatientLastName].filter(Boolean).join(' ') || '—')}</td>
+              <td>${escapePaymentHtml(payment.ServiceName || '—')}</td>
+              <td class="mono">${formatCurrency(payment.ServicePrice)}</td>
+              <td>${escapePaymentHtml(paymentType)}</td>
+              <td>${statusBadge(paid ? 'Yes' : 'No')}</td>
+              <td>${paid ? '' : `<button class="btn btn-sm btn-primary mark-paid" data-id="${Number(payment.Payment_ID)}">Mark paid</button>`}</td>
+            </tr>`;
+          }).join('')}</tbody></table></div>`;
+
+        paymentList.querySelectorAll('.mark-paid').forEach(button => {
+          button.addEventListener('click', async () => {
+            button.disabled = true;
+            try {
+              await DB.confirmPayment(button.dataset.id);
+              toast('Payment confirmed.', 'success');
+              await loadPayments();
+            } catch (err) {
+              button.disabled = false;
+              showBanner('form-banner', apiErrorMessage(err), 'error');
+            }
+          });
+        });
+      } catch (err) {
+        paymentList.innerHTML = emptyState(escapePaymentHtml(apiErrorMessage(err)));
+      }
+    }
+
+    async function loadPatients() {
+      patientSelect.innerHTML = '<option value="">Loading patients…</option>';
+      submitButton.disabled = true;
+      try {
+        const patients = await DB.getPatients();
+        const activePatients = (Array.isArray(patients) ? patients : [])
+          .filter(patient => patient.IsActive === true || Number(patient.IsActive) === 1)
+          .sort((left, right) =>
+            `${left.LastName || ''}${left.FirstName || ''}`.localeCompare(`${right.LastName || ''}${right.FirstName || ''}`)
+          );
+        patientSelect.innerHTML = '<option value="">Select…</option>' +
+          activePatients.map(patient =>
+            `<option value="${Number(patient.Patient_ID)}">${escapePaymentHtml(patient.FirstName)} ${escapePaymentHtml(patient.LastName)}</option>`
+          ).join('');
+        hasActivePatients = activePatients.length > 0;
+        submitButton.disabled = !hasActivePatients;
+        if (!activePatients.length) {
+          showBanner('form-banner', 'No active patients are available for billing.', 'error');
+        }
+      } catch (err) {
+        patientSelect.innerHTML = '<option value="">Unable to load patients</option>';
+        showBanner('form-banner', apiErrorMessage(err), 'error');
+      }
+    }
+
+    loadPatients();
+    loadPayments();
+    paymentForm.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const pid = Number(patientSelect.value);
+      const service = document.getElementById('service').value.trim();
+      const priceValue = document.getElementById('price').value;
+      const price = Number(priceValue);
+      if (!hasActivePatients || !Number.isInteger(pid) || pid <= 0 || !service || service.length > 200 ||
+          !Number.isFinite(price) || price <= 0 || !/^\d+(\.\d{1,2})?$/.test(priceValue)) {
+        showBanner('form-banner', 'Please complete all required fields with valid values.', 'error'); return;
+      }
+      submitButton.disabled = true;
+      submitButton.textContent = 'Saving…';
+      try {
+        await DB.createPayment({
+          Patient_ID: pid,
+          ServiceName: service,
+          ServicePrice: price,
+          PaymentType: document.getElementById('ptype').value,
+          IsPaid: document.getElementById('paid').value
+        });
+        showBanner('form-banner', 'Payment recorded successfully.', 'success');
+        toast('Payment recorded.', 'success');
+        paymentForm.reset();
+        patientSelect.value = '';
+        await loadPayments();
+      } catch (err) {
+        showBanner('form-banner', apiErrorMessage(err), 'error');
+      } finally {
+        submitButton.disabled = !hasActivePatients;
+        submitButton.textContent = 'Submit payment';
+      }
+    });
+  </script>
+</body>
+</html>

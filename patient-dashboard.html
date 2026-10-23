@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Patient Dashboard — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">PATIENT · DASHBOARD</div>
+      <h2 class="page-title">Your health overview</h2>
+      <p class="page-desc">Your appointments, recent activity and account balance.</p>
+      <div class="grid-3" id="stats"></div>
+      <div class="card">
+        <div class="card-head">
+          <h3>Your appointments</h3>
+          <div class="btn-row">
+            <button class="btn btn-sm btn-ghost" id="refresh-dashboard" type="button">Refresh</button>
+            <a class="btn btn-sm btn-primary" href="appointment.html">Book new</a>
+          </div>
+        </div>
+        <div id="appts-list"></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Payment summary</h3></div>
+        <div id="billing-list"></div>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = [
+      'This dashboard shows your appointments and payments.',
+      'Use “Book new” to schedule a visit.'
+    ];
+    const s = Session.requireLogin(['Patient']);
+    if (!s) throw new Error('redirect');
+    renderChrome('patient-dashboard.html');
+
+    function escapePatientHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+    }
+
+    function appointmentStatus(appointment) {
+      const status = appointment.Status || appointment.status ||
+        appointment.AppointmentStatus || appointment.Appointment_Status;
+      return String(status || 'Scheduled').trim();
+    }
+
+    async function loadPatientDashboard() {
+      const statsEl = document.getElementById('stats');
+      const apptsEl = document.getElementById('appts-list');
+      const billEl = document.getElementById('billing-list');
+      apptsEl.innerHTML = '<p class="hint">Loading appointments…</p>';
+      billEl.innerHTML = '<p class="hint">Loading payments…</p>';
+
+      const [appointmentsResult, paymentsResult] = await Promise.allSettled([
+        DB.getAppointments({ patientId: s.User_ID }),
+        DB.getPayments({ patientId: s.User_ID })
+      ]);
+
+      let appointments = [];
+      let payments = [];
+      let scheduledCount = 0;
+      if (appointmentsResult.status === 'fulfilled') {
+        appointments = Array.isArray(appointmentsResult.value) ? appointmentsResult.value : [];
+        appointments.sort((left, right) =>
+          `${right.AppointmentDate || ''}${right.AppointmentTime || ''}`
+            .localeCompare(`${left.AppointmentDate || ''}${left.AppointmentTime || ''}`)
+        );
+        scheduledCount = appointments.filter(appointment =>
+          appointmentStatus(appointment).toLowerCase() === 'scheduled'
+        ).length;
+        apptsEl.innerHTML = appointments.length
+          ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Time</th><th>Reason</th><th>Status</th></tr></thead><tbody>
+              ${appointments.map(appointment => {
+                const status = appointmentStatus(appointment);
+                return `<tr>
+                  <td>${escapePatientHtml(formatDate(appointment.AppointmentDate))}</td>
+                  <td>${escapePatientHtml(appointment.AppointmentTime || '—')}</td>
+                  <td>${escapePatientHtml(appointment.Reason || '—')}</td>
+                  <td>${statusBadge(escapePatientHtml(status))}</td>
+                </tr>`;
+              }).join('')}
+            </tbody></table></div>`
+          : emptyState('No appointments found.', '<a class="btn btn-sm btn-primary" href="appointment.html">Book an appointment</a>');
+        statsEl.innerHTML = `
+          <div class="stat"><div class="num">${scheduledCount}</div><div class="label">Scheduled visits</div></div>
+          <div class="stat"><div class="num">—</div><div class="label">Unpaid invoices</div></div>
+          <div class="stat"><div class="num">—</div><div class="label">Paid to date</div></div>`;
+      } else {
+        apptsEl.innerHTML = emptyState(`Unable to load appointments: ${escapePatientHtml(apiErrorMessage(appointmentsResult.reason))}`);
+        statsEl.innerHTML = `
+          <div class="stat"><div class="num">—</div><div class="label">Scheduled visits</div></div>
+          <div class="stat"><div class="num">—</div><div class="label">Unpaid invoices</div></div>
+          <div class="stat"><div class="num">—</div><div class="label">Paid to date</div></div>`;
+      }
+
+      if (paymentsResult.status === 'fulfilled') {
+        payments = Array.isArray(paymentsResult.value) ? paymentsResult.value : [];
+        const outstanding = payments.filter(payment => payment.IsPaid === 'No' || payment.IsPaid === false);
+        const paidTotal = payments
+          .filter(payment => payment.IsPaid === 'Yes' || payment.IsPaid === true)
+          .reduce((total, payment) => total + Number(payment.PaymentAmount || 0), 0);
+        billEl.innerHTML = payments.length
+          ? `<div class="table-wrap"><table><thead><tr><th>Service</th><th>Amount</th><th>Date</th><th>Paid</th></tr></thead><tbody>
+              ${payments.map(payment => `<tr>
+                <td>${escapePatientHtml(payment.ServiceName || '—')}</td>
+                <td>${formatCurrency(payment.ServicePrice || payment.PaymentAmount)}</td>
+                <td>${escapePatientHtml(formatDate(payment.PaymentDate))}</td>
+                <td>${statusBadge(payment.IsPaid === true || payment.IsPaid === 'Yes' ? 'Yes' : 'No')}</td>
+              </tr>`).join('')}
+            </tbody></table></div>`
+          : emptyState('No payment records yet.');
+        statsEl.innerHTML = `
+          <div class="stat"><div class="num">${scheduledCount}</div><div class="label">Scheduled visits</div></div>
+          <div class="stat"><div class="num">${outstanding.length}</div><div class="label">Unpaid invoices</div></div>
+          <div class="stat"><div class="num">${formatCurrency(paidTotal)}</div><div class="label">Paid to date</div></div>`;
+      } else {
+        billEl.innerHTML = emptyState(`Unable to load payments: ${escapePatientHtml(apiErrorMessage(paymentsResult.reason))}`);
+        statsEl.querySelectorAll('.stat .num')[1].textContent = '—';
+        statsEl.querySelectorAll('.stat .num')[2].textContent = '—';
+      }
+    }
+
+    loadPatientDashboard();
+    document.getElementById('refresh-dashboard').addEventListener('click', loadPatientDashboard);
+    window.addEventListener('pageshow', event => {
+      if (event.persisted) loadPatientDashboard();
+    });
+  </script>
+</body>
+</html>

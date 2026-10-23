@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manage Patient Details — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">RECEPTION · PATIENTS</div>
+      <h2 class="page-title">Manage Patient Details</h2>
+      <p class="page-desc">Receptionists search, retrieve and update patient details. Patient should have requested the update.</p>
+      <div id="form-banner" class="banner"></div>
+      <div class="card">
+        <label for="search">Search patient (name, email or contact)</label>
+        <input type="text" id="search" placeholder="Type to filter…">
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Patients</h3></div>
+        <div id="list"></div>
+      </div>
+      <div class="card" id="edit-card" style="display:none">
+        <div class="card-head"><h3>Update details</h3></div>
+        <form id="edit-form" novalidate>
+          <input type="hidden" id="edit-id">
+          <div class="grid-2">
+            <div><label for="efirst">First name <span class="req">*</span></label><input type="text" id="efirst"></div>
+            <div><label for="elast">Last name <span class="req">*</span></label><input type="text" id="elast"></div>
+          </div>
+          <label for="ephone">Contact number <span class="req">*</span></label><input type="tel" id="ephone">
+          <label for="eemail">Email <span class="req">*</span></label><input type="email" id="eemail">
+          <label for="eaddress">Address <span class="req">*</span></label><input type="text" id="eaddress">
+          <label for="eemerg">Emergency contact</label><input type="tel" id="eemerg">
+          <div class="btn-row">
+            <button type="submit" class="btn btn-primary">Save updates</button>
+            <button type="button" class="btn btn-ghost" id="cancel-edit">Cancel</button>
+          </div>
+        </form>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = [
+      'Search for a patient by name, email address or contact number.',
+      'Save updates to write them to the clinic database.'
+    ];
+    const s = Session.requireLogin(['Receptionist']);
+    if (!s) throw new Error('redirect');
+    renderChrome('patient-details.html');
+    const listElement = document.getElementById('list');
+    const editForm = document.getElementById('edit-form');
+    const saveButton = editForm.querySelector('button[type="submit"]');
+    let patients = [];
+
+    function escapePatientHtml(value) {
+      return String(value == null ? '' : value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+    }
+
+    function renderList(filter = '') {
+      const query = filter.trim().toLowerCase();
+      const rows = patients.filter(patient => {
+        if (!patient.IsActive) return false;
+        const searchable = [
+          patient.FirstName, patient.LastName, patient.Email,
+          patient.ContactNumber, patient.Address
+        ].join(' ').toLowerCase();
+        return searchable.includes(query);
+      });
+      if (!rows.length) {
+        listElement.innerHTML = emptyState(query ? 'No matching patients.' : 'No active patients found.');
+        return;
+      }
+      listElement.innerHTML = `<div class="table-wrap"><table>
+        <thead><tr><th>Name</th><th>Contact</th><th>Email</th><th>Address</th><th></th></tr></thead>
+        <tbody>${rows.map(patient => `<tr>
+          <td>${escapePatientHtml(`${patient.FirstName} ${patient.LastName}`)}</td>
+          <td class="mono">${escapePatientHtml(patient.ContactNumber || '—')}</td>
+          <td class="mono">${escapePatientHtml(patient.Email)}</td>
+          <td>${escapePatientHtml(patient.Address || '—')}</td>
+          <td><button class="btn btn-sm btn-primary edit-btn" data-id="${Number(patient.Patient_ID)}">Update</button></td>
+        </tr>`).join('')}</tbody></table></div>`;
+      listElement.querySelectorAll('.edit-btn').forEach(button => {
+        button.addEventListener('click', () => {
+          const patient = patients.find(item => Number(item.Patient_ID) === Number(button.dataset.id));
+          if (!patient) return;
+          document.getElementById('edit-id').value = patient.Patient_ID;
+          document.getElementById('efirst').value = patient.FirstName || '';
+          document.getElementById('elast').value = patient.LastName || '';
+          document.getElementById('ephone').value = patient.ContactNumber || '';
+          document.getElementById('eemail').value = patient.Email || '';
+          document.getElementById('eaddress').value = patient.Address || '';
+          document.getElementById('eemerg').value = patient.EmergencyContact || '';
+          document.getElementById('edit-card').style.display = 'block';
+          document.getElementById('edit-card').scrollIntoView({ behavior: 'smooth' });
+        });
+      });
+    }
+
+    async function loadPatients() {
+      listElement.innerHTML = '<p class="hint">Loading patients…</p>';
+      try {
+        const result = await DB.getPatients();
+        patients = Array.isArray(result) ? result : [];
+        renderList(document.getElementById('search').value);
+      } catch (err) {
+        listElement.innerHTML = emptyState(escapePatientHtml(apiErrorMessage(err)));
+      }
+    }
+
+    loadPatients();
+    document.getElementById('search').addEventListener('input', e => renderList(e.target.value));
+    document.getElementById('cancel-edit').addEventListener('click', () => {
+      editForm.reset();
+      document.getElementById('edit-card').style.display = 'none';
+      document.getElementById('form-banner').className = 'banner';
+    });
+    editForm.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const id = Number(document.getElementById('edit-id').value);
+      const payload = {
+        FirstName: document.getElementById('efirst').value.trim(),
+        LastName: document.getElementById('elast').value.trim(),
+        ContactNumber: document.getElementById('ephone').value.replace(/\s/g, ''),
+        Email: document.getElementById('eemail').value.trim().toLowerCase(),
+        Address: document.getElementById('eaddress').value.trim(),
+        EmergencyContact: document.getElementById('eemerg').value.replace(/\s/g, '') || null
+      };
+      if (payload.FirstName.length < 2 || payload.LastName.length < 2 ||
+          !Validate.phone(payload.ContactNumber) || !Validate.email(payload.Email) ||
+          payload.Address.length < 8 ||
+          (payload.EmergencyContact && !Validate.phone(payload.EmergencyContact))) {
+        showBanner('form-banner', 'Enter valid names, a valid 10-digit SA contact number, email, address, and optional emergency number.', 'error');
+        return;
+      }
+      saveButton.disabled = true;
+      saveButton.textContent = 'Saving…';
+      try {
+        const updatedPatient = await DB.updatePatient(id, payload);
+        patients = patients.map(patient =>
+          Number(patient.Patient_ID) === id ? { ...patient, ...updatedPatient } : patient
+        );
+        showBanner('form-banner', 'Patient details saved.', 'success');
+        toast('Patient details updated.', 'success');
+        document.getElementById('edit-card').style.display = 'none';
+        renderList(document.getElementById('search').value);
+      } catch (err) {
+        showBanner('form-banner', apiErrorMessage(err), 'error');
+      } finally {
+        saveButton.disabled = false;
+        saveButton.textContent = 'Save updates';
+      }
+    });
+  </script>
+</body>
+</html>

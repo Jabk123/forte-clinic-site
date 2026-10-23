@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Appointments — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">APPOINTMENTS</div>
+      <h2 class="page-title">Schedule & manage appointments</h2>
+      <p class="page-desc">Book an available slot. Only one appointment may occupy any date + time combination.</p>
+
+      <div id="form-banner" class="banner"></div>
+
+      <div class="card">
+        <div class="card-head"><h3>Book appointment</h3></div>
+        <form id="appt-form" novalidate>
+          <div id="patient-select-wrap" style="display:none">
+            <label for="patientId">Patient <span class="req">*</span></label>
+            <select id="patientId"></select>
+            <div class="field-error" id="err-patient"></div>
+          </div>
+
+          <div class="grid-2">
+            <div>
+              <label for="apptDate">Date <span class="req">*</span></label>
+              <input type="date" id="apptDate">
+              <div class="field-error" id="err-date"></div>
+            </div>
+            <div>
+              <label for="apptTime">Time <span class="req">*</span></label>
+              <input type="time" id="apptTime">
+              <div class="field-error" id="err-time"></div>
+            </div>
+          </div>
+
+          <label for="desc">Description</label>
+          <input type="text" id="desc" placeholder="e.g. Follow-up blood pressure, new complaint…">
+
+          <div class="btn-row">
+            <button type="submit" class="btn btn-primary">Book appointment</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="card">
+        <div class="card-head"><h3>Existing appointments</h3></div>
+        <div id="list"></div>
+      </div>
+    </main>
+  </div>
+
+  <script src="js/app.js"></script>
+  <script>
+    window.PAGE_HELP = [
+      'Each date + time slot can only hold one appointment (unique constraint).',
+      'Patients can only book for themselves. Receptionists and clinicians can book for any patient.',
+      'Past dates are not accepted for new bookings.'
+    ];
+    const s = Session.requireLogin(['Patient', 'Doctor', 'Nurse', 'Receptionist', 'Admin']);
+    if (!s) throw new Error('redirect');
+    renderChrome('appointment.html');
+
+    const isPatient = s.Role === 'Patient';
+    const patientWrap = document.getElementById('patient-select-wrap');
+    const patientSelect = document.getElementById('patientId');
+    const submitButton = document.querySelector('#appt-form button[type="submit"]');
+    const dateInput = document.getElementById('apptDate');
+    const listElement = document.getElementById('list');
+
+    if (!isPatient) {
+      patientWrap.style.display = 'block';
+    }
+
+    const checkDate = bindField(dateInput, document.getElementById('err-date'),
+      (v) => Validate.isFutureOrTodayDate(v), 'Choose today or a future date.');
+    const checkTime = bindField(document.getElementById('apptTime'), document.getElementById('err-time'),
+      (v) => Validate.notEmpty(v), 'Select a time.');
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+    }
+
+    async function renderList() {
+      listElement.innerHTML = '<p class="hint">Loading appointments…</p>';
+      try {
+        const rows = await DB.getAppointments(isPatient ? { patientId: s.User_ID } : undefined);
+        if (!Array.isArray(rows) || !rows.length) {
+          listElement.innerHTML = emptyState('No appointments found.');
+          return;
+        }
+        listElement.innerHTML = `<div class="table-wrap"><table>
+          <thead><tr><th>Date</th><th>Time</th>${isPatient ? '' : '<th>Patient</th>'}<th>Reason</th><th>Status</th><th></th></tr></thead>
+          <tbody>${rows.map(appointment => {
+            const status = appointment.Status || 'Scheduled';
+            return `<tr>
+              <td>${escapeHtml(formatDate(appointment.AppointmentDate))}</td>
+              <td class="mono">${escapeHtml(String(appointment.AppointmentTime || '—').slice(0, 5))}</td>
+              ${isPatient ? '' : `<td>${escapeHtml([appointment.PatientFirstName, appointment.PatientLastName].filter(Boolean).join(' ') || '—')}</td>`}
+              <td>${escapeHtml(appointment.Reason || '—')}</td>
+              <td>${statusBadge(escapeHtml(status))}</td>
+              <td>${status === 'Scheduled' ? `<button class="btn btn-sm btn-ghost cancel-btn" data-id="${Number(appointment.Appointment_ID)}">Cancel</button>` : ''}</td>
+            </tr>`;
+          }).join('')}</tbody></table></div>`;
+
+        listElement.querySelectorAll('.cancel-btn').forEach(button => {
+          button.addEventListener('click', async () => {
+            if (!confirm('Cancel this appointment?')) return;
+            button.disabled = true;
+            try {
+              await DB.cancelAppointment(button.dataset.id);
+              toast('Appointment cancelled.', 'success');
+              await renderList();
+            } catch (err) {
+              button.disabled = false;
+              showBanner('form-banner', apiErrorMessage(err), 'error');
+            }
+          });
+        });
+      } catch (err) {
+        listElement.innerHTML = emptyState(escapeHtml(apiErrorMessage(err)));
+      }
+    }
+
+    document.getElementById('appt-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const okDate = checkDate();
+      const okTime = checkTime();
+      const patientId = isPatient ? s.User_ID : Number(patientSelect.value);
+      if (!isPatient && !patientId) {
+        document.getElementById('err-patient').textContent = 'Select a patient.';
+        document.getElementById('err-patient').classList.add('show');
+        showBanner('form-banner', 'Please fix the highlighted fields.', 'error');
+        return;
+      }
+      if (!okDate || !okTime) {
+        showBanner('form-banner', 'Please fix the highlighted fields.', 'error');
+        return;
+      }
+
+      const dateValue = dateInput.value;
+      const timeValue = document.getElementById('apptTime').value;
+      const selectedDateTime = new Date(`${dateValue}T${timeValue}:00`);
+      if (selectedDateTime <= new Date()) {
+        showBanner('form-banner', 'Choose a future appointment time.', 'error');
+        return;
+      }
+
+      submitButton.disabled = true;
+      submitButton.textContent = 'Booking…';
+      try {
+        await DB.createAppointment({
+          Patient_ID: patientId,
+          AppointmentDate: dateValue,
+          AppointmentTime: timeValue,
+          Reason: document.getElementById('desc').value.trim()
+        });
+        showBanner('form-banner', 'Appointment booked successfully.', 'success');
+        toast('Appointment booked successfully.', 'success');
+        document.getElementById('appt-form').reset();
+        const today = new Date();
+        dateInput.min = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        await renderList();
+      } catch (err) {
+        showBanner('form-banner', apiErrorMessage(err), 'error');
+      } finally {
+        submitButton.disabled = false;
+        submitButton.textContent = 'Book appointment';
+      }
+    });
+
+    (async function initializeAppointments() {
+      const today = new Date();
+      dateInput.min = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+      if (!isPatient) {
+        submitButton.disabled = true;
+        try {
+          const patients = await DB.getPatients();
+          const activePatients = patients.filter(patient =>
+            patient.IsActive === true || Number(patient.IsActive) === 1
+          );
+          patientSelect.innerHTML = '<option value="">Select patient…</option>' +
+            activePatients.map(patient =>
+              `<option value="${Number(patient.Patient_ID)}">${escapeHtml(patient.FirstName)} ${escapeHtml(patient.LastName)} (${escapeHtml(patient.ContactNumber || 'no phone')})</option>`
+            ).join('');
+          submitButton.disabled = activePatients.length === 0;
+          if (!activePatients.length) {
+            showBanner('form-banner', 'No active patient accounts are available to book.', 'error');
+          }
+        } catch (err) {
+          showBanner('form-banner', apiErrorMessage(err), 'error');
+          submitButton.disabled = true;
+        }
+      }
+      await renderList();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manager Dashboard — Forte Community Clinic</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app-header"></div>
+  <div class="dash-layout">
+    <nav class="tabs-nav" id="dash-nav"></nav>
+    <main class="dash-main">
+      <div class="breadcrumb">MANAGER · DASHBOARD</div>
+      <h2 class="page-title">Management overview</h2>
+      <p class="page-desc">Key figures and quick access to reports.</p>
+      <div class="grid-3" id="stats"></div>
+      <div class="card">
+        <div class="card-head"><h3>Reports</h3></div>
+        <div class="btn-row" style="margin-top:0">
+          <a class="btn btn-primary" href="reports.html">Generate reports</a>
+        </div>
+      </div>
+    </main>
+  </div>
+  <script src="js/app.js"></script>
+  <script>
+    const s = Session.requireLogin(['Manager']);
+    if (!s) throw new Error('redirect');
+    renderChrome('manager-dashboard.html');
+    (async function () {
+      const stats = document.getElementById('stats');
+      try {
+        const [appts, metrics] = await Promise.all([DB.getAppointments(), DB.getMetrics()]);
+        const arr = Array.isArray(appts) ? appts : [];
+        stats.innerHTML = `
+          <div class="stat"><div class="num">${arr.length}</div><div class="label">Appointments</div></div>
+          <div class="stat"><div class="num">${metrics.activePatients ?? '—'}</div><div class="label">Patients</div></div>
+          <div class="stat"><div class="num">${metrics.scheduledAppointments ?? '—'}</div><div class="label">Scheduled</div></div>`;
+      } catch (err) {
+        stats.innerHTML = `<div class="card" style="grid-column:1/-1">${emptyState(apiErrorMessage(err))}</div>`;
+      }
+    })();
+  </script>
+</body>
+</html>
