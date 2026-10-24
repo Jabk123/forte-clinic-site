@@ -35,7 +35,7 @@
       </div>
       <div class="card">
         <div class="card-head"><h3>Report details</h3></div>
-        <div id="out"></div>
+        <div id="out" aria-live="polite"></div>
       </div>
     </main>
   </div>
@@ -45,37 +45,74 @@
     const s = Session.requireLogin(['Manager', 'Admin']);
     if (!s) throw new Error('redirect');
     renderChrome('reports.html');
-    function runReport() {
-      const db = DB.load();
+    function dateKey(value) {
+      return value ? String(value).slice(0, 10) : '';
+    }
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+    }
+    function filterByDate(rows, field, from, to) {
+      return rows.filter(row => {
+        const date = dateKey(row[field]);
+        return date && (!from || date >= from) && (!to || date <= to);
+      });
+    }
+    async function runReport() {
       const type = document.getElementById('rtype').value;
       const from = document.getElementById('from').value;
       const to = document.getElementById('to').value;
       const el = document.getElementById('out');
-      if (type === 'appointments') {
-        let rows = db.Appointments;
-        if (from) rows = rows.filter(a => a.AppointmentDate >= from);
-        if (to) rows = rows.filter(a => a.AppointmentDate <= to);
-        const statuses = {};
-        rows.forEach(a => { statuses[a.AppointmentStatus] = (statuses[a.AppointmentStatus] || 0) + 1; });
-        el.innerHTML = Object.keys(statuses).length
-          ? `<div class="table-wrap"><table><thead><tr><th>Status</th><th>Count</th></tr></thead>
-             <tbody>${Object.entries(statuses).map(([k,v]) => `<tr><td>${statusBadge(k)}</td><td class="mono">${v}</td></tr>`).join('')}</tbody></table></div>`
-          : emptyState('No data for selected filters.');
-      } else if (type === 'payments') {
-        let rows = db.Payments;
-        if (from) rows = rows.filter(p => p.PaymentDate >= from);
-        if (to) rows = rows.filter(p => p.PaymentDate <= to);
-        const total = rows.filter(p => p.IsPaid === 'Yes').reduce((s, p) => s + p.PaymentAmount, 0);
-        el.innerHTML = `<p><strong>Collected:</strong> ${formatCurrency(total)} · <strong>Records:</strong> ${rows.length}</p>
-          <div class="table-wrap"><table><thead><tr><th>Date</th><th>Service</th><th>Amount</th><th>Status</th></tr></thead>
-          <tbody>${rows.map(p => `<tr><td>${formatDate(p.PaymentDate)}</td><td>${p.ServiceName}</td><td class="mono">${formatCurrency(p.ServicePrice)}</td><td>${statusBadge(p.IsPaid)}</td></tr>`).join('')}</tbody></table></div>`;
-      } else if (type === 'consultations') {
-        el.innerHTML = `<p><strong>Total consultations:</strong> ${db.Consultations.length}</p>` +
-          (db.Consultations.length ? `<div class="table-wrap"><table><thead><tr><th>Date</th><th>Duration</th><th>Severity</th></tr></thead>
-          <tbody>${db.Consultations.map(c => `<tr><td>${formatDate(c.ConsultationDate.slice(0,10))}</td><td>${c.ConsultationDuration} min</td><td>${c.SeverityStatus ? statusBadge(c.SeverityStatus) : '—'}</td></tr>`).join('')}</tbody></table></div>` : emptyState('No consultations yet.'));
-      } else {
-        el.innerHTML = `<div class="table-wrap"><table><thead><tr><th>Medication</th><th>Stock</th><th>Reorder</th><th>Expiry</th></tr></thead>
-          <tbody>${db.Inventory.map(i => `<tr><td>${i.MedicationName} ${i.Concentration}</td><td class="mono">${i.StockQuantity}</td><td class="mono">${i.ReorderLevel}</td><td>${formatDate(i.ExpiryDate)}</td></tr>`).join('')}</tbody></table></div>`;
+      if (from && to && from > to) {
+        el.innerHTML = emptyState('The start date must be on or before the end date.');
+        return;
+      }
+      el.innerHTML = '<p>Loading report…</p>';
+      try {
+        if (type === 'appointments') {
+          const data = await DB.getAppointments();
+          const rows = filterByDate(data, 'AppointmentDate', from, to);
+          const statuses = {};
+          rows.forEach(a => {
+            const status = a.AppointmentStatus || a.Status || 'Unknown';
+            statuses[status] = (statuses[status] || 0) + 1;
+          });
+          el.innerHTML = rows.length
+            ? `<p><strong>Total appointments:</strong> ${rows.length}</p>
+               <div class="table-wrap"><table><thead><tr><th>Status</th><th>Count</th></tr></thead>
+               <tbody>${Object.entries(statuses).map(([status, count]) => `<tr><td>${statusBadge(escapeHtml(status))}</td><td class="mono">${count}</td></tr>`).join('')}</tbody></table></div>`
+            : emptyState('No appointments for the selected date range.');
+        } else if (type === 'payments') {
+          const data = await DB.getPayments();
+          const rows = filterByDate(data, 'PaymentDate', from, to);
+          const total = rows.filter(p => String(p.IsPaid).toLowerCase() === 'yes').reduce((sum, p) => sum + Number(p.PaymentAmount || 0), 0);
+          el.innerHTML = rows.length
+            ? `<p><strong>Collected:</strong> ${formatCurrency(total)} · <strong>Records:</strong> ${rows.length}</p>
+               <div class="table-wrap"><table><thead><tr><th>Date</th><th>Service</th><th>Amount</th><th>Status</th></tr></thead>
+               <tbody>${rows.map(p => `<tr><td>${formatDate(dateKey(p.PaymentDate))}</td><td>${escapeHtml(p.ServiceName)}</td><td class="mono">${formatCurrency(p.PaymentAmount)}</td><td>${statusBadge(escapeHtml(p.IsPaid))}</td></tr>`).join('')}</tbody></table></div>`
+            : emptyState('No payments for the selected date range.');
+        } else if (type === 'consultations') {
+          const data = await DB.getConsultations();
+          const rows = filterByDate(data, 'ConsultationDate', from, to);
+          el.innerHTML = rows.length
+            ? `<p><strong>Total consultations:</strong> ${rows.length}</p>
+               <div class="table-wrap"><table><thead><tr><th>Date</th><th>Patient</th><th>Diagnosis</th><th>Notes</th></tr></thead>
+               <tbody>${rows.map(c => `<tr><td>${formatDate(dateKey(c.ConsultationDate))}</td><td>${escapeHtml([c.PatientFirstName, c.PatientLastName].filter(Boolean).join(' ')) || '—'}</td><td>${escapeHtml(c.DiagnosisSummary) || '—'}</td><td>${escapeHtml(c.Notes) || '—'}</td></tr>`).join('')}</tbody></table></div>`
+            : emptyState('No consultations for the selected date range.');
+        } else {
+          const rows = await DB.getInventory();
+          el.innerHTML = rows.length
+            ? `<div class="table-wrap"><table><thead><tr><th>Medication</th><th>Stock</th><th>Reorder</th><th>Expiry</th></tr></thead>
+               <tbody>${rows.map(i => `<tr><td>${escapeHtml([i.MedicationName, i.Concentration].filter(Boolean).join(' '))}</td><td class="mono">${escapeHtml(i.StockQuantity)}</td><td class="mono">${escapeHtml(i.ReorderLevel)}</td><td>${formatDate(i.ExpiryDate)}</td></tr>`).join('')}</tbody></table></div>`
+            : emptyState('No inventory records found.');
+        }
+      } catch (err) {
+        el.innerHTML = emptyState(escapeHtml(apiErrorMessage(err)));
       }
     }
     document.getElementById('run').addEventListener('click', runReport);

@@ -111,8 +111,9 @@ a { color: var(--teal-dark); text-decoration-thickness: 1px; text-underline-offs
 .shell { max-width: 1160px; margin: 0 auto; padding: 36px 28px 110px; flex: 1; }
 .shell-narrow { max-width: 520px; margin: 0 auto; padding: 48px 24px 110px; flex: 1; }
 .dash-layout {
-  display: grid; grid-template-columns: 250px 1fr; gap: 0; max-width: 1320px; margin: 0 auto; flex: 1;
+  display: grid; grid-template-columns: 250px minmax(0, 1fr); gap: 0; max-width: 1320px; margin: 0 auto; flex: 1;
   min-height: calc(100vh - 72px);
+  min-width: 0;
 }
 .tabs-nav { padding: 28px 14px; border-right: 1px solid var(--sage-line); background: var(--panel); }
 .tabs-nav a {
@@ -126,7 +127,7 @@ a { color: var(--teal-dark); text-decoration-thickness: 1px; text-underline-offs
   background: var(--panel); color: var(--teal-dark); border-right-color: var(--teal); font-weight: 600; box-shadow: var(--shadow);
 }
 .tabs-nav .nav-icon { width: 18px; height: 18px; flex-shrink: 0; opacity: 0.85; }
-.dash-main { padding: 32px 36px 110px; background: var(--paper); }
+.dash-main { min-width: 0; padding: 32px 36px 110px; background: var(--paper); }
 
 /* Cards */
 .card {
@@ -162,7 +163,7 @@ label { display: block; font-size: 0.95rem; font-weight: 600; margin: 18px 0 7px
 label .req { color: var(--coral); }
 .hint { font-size: 0.85rem; color: var(--ink-soft); margin-top: 5px; }
 
-input[type=text], input[type=email], input[type=password], input[type=tel], input[type=number],
+input[type=text], input[type=search], input[type=email], input[type=password], input[type=tel], input[type=number],
 input[type=date], input[type=time], textarea, select {
   width: 100%; padding: 13px 14px; border: 1.5px solid var(--sage-line); border-radius: var(--radius-sm);
   font-family: var(--font-body); font-size: 1.02rem; background: var(--paper); color: var(--ink);
@@ -327,6 +328,69 @@ tr:hover td { background: rgba(228, 239, 237, 0.35); }
 }
 
 :focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+
+/* Prescription cards stay readable on narrow screens without a wide table. */
+.dash-main.dispense-main { min-width: 0; }
+.dispense-search label { margin-top: 0; }
+.prescription-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 360px), 1fr));
+  gap: 16px;
+}
+.prescription-card {
+  min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--sage-line);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.prescription-card__heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.prescription-card__heading h4 { margin: 0; overflow-wrap: anywhere; }
+.prescription-card__reference {
+  margin: 0 0 4px;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+}
+.prescription-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: 0 0 18px;
+}
+.prescription-details > div { min-width: 0; }
+.prescription-details dt {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.prescription-details dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+.prescription-details__instructions { grid-column: 1 / -1; }
+.prescription-card .btn { width: 100%; }
+.stock-update-form {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr);
+  gap: 8px;
+  min-width: 120px;
+}
+.stock-update-form .btn { width: 100%; }
+
+@media (max-width: 720px) {
+  .dash-main.dispense-main { padding: 24px 16px 96px; }
+  .dispense-main .card { padding: 20px 16px; }
+  .prescription-card { padding: 18px 16px; }
+  .prescription-details { grid-template-columns: minmax(0, 1fr); }
+}
 
 @media print {
   .topbar, .tabs-nav, #help-btn, #help-panel, #app-footer, .vitals-strip { display: none !important; }

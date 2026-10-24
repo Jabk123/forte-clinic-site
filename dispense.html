@@ -11,80 +11,114 @@
   <div id="app-header"></div>
   <div class="dash-layout">
     <nav class="tabs-nav" id="dash-nav"></nav>
-    <main class="dash-main">
-      <div class="breadcrumb">
-      <h2 class="page-title">Dispense Medication</h2>
-      <p class="page-desc">Pharmacist dispenses medication prescribed by the doctor. Inventory is adjusted. Search by patient if needed.</p>
-      <div id="form-banner" class="banner"></div>
-      <div class="card">
-        <label for="search">Search by patient name or contact</label>
-        <input type="text" id="search" placeholder="Optional filter…">
-      </div>
-      <div class="card">
+    <main class="dash-main dispense-main">
+      <div class="breadcrumb">PHARMACY · DISPENSING</div>
+      <h2 class="page-title">Dispense medication</h2>
+      <p class="page-desc">Review prescribed medication, verify the patient and quantity, then dispense to update stock.</p>
+      <div id="form-banner" class="banner" role="status"></div>
+      <section class="card dispense-search" aria-label="Search prescriptions">
+        <label for="search">Search by patient, medication, or contact</label>
+        <input type="search" id="search" placeholder="Start typing to filter prescriptions…" autocomplete="off">
+      </section>
+      <section class="card">
         <div class="card-head"><h3>Pending prescriptions</h3></div>
-        <div id="list"></div>
-      </div>
+        <div id="list" class="prescription-list" aria-live="polite">Loading prescriptions…</div>
+      </section>
     </main>
   </div>
   <script src="js/app.js"></script>
   <script>
-    window.PAGE_HELP = ['
-    const s = Session.requireLogin(['Pharmacist']);
-    if (!s) throw new Error('redirect');
+    window.PAGE_HELP = [
+      'Search by patient name, medication name, or contact number.',
+      'Dispensing deducts the prescribed quantity from inventory.',
+      'If stock is insufficient, the prescription stays pending.'
+    ];
+    const session = Session.requireLogin(['Pharmacist', 'Admin']);
+    if (!session) throw new Error('redirect');
     renderChrome('dispense.html');
-    function render(filter = '') {
-      const db = DB.load();
-      let pending = db.Prescriptions.filter(p => p.DispenseType === 'Prescribed' && !p.DispensedDate);
-      if (filter) {
-        const q = filter.toLowerCase();
-        pending = pending.filter(p => {
-          const c = db.Consultations.find(x => x.Consultation_ID === p.Consultation_ID);
-          const a = c ? db.Appointments.find(x => x.Appointment_ID === c.Appointment_ID) : null;
-          const pat = a ? db.Patients.find(x => x.Patient_ID === a.Patient_ID) : null;
-          if (!pat) return false;
-          return (pat.FirstName + ' ' + pat.LastName).toLowerCase().includes(q) || pat.ContactNumber.includes(q);
-        });
+
+    let prescriptions = [];
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+    }
+    function renderPrescriptions(filter = '') {
+      const query = filter.trim().toLowerCase();
+      const rows = prescriptions.filter(prescription => {
+        const searchable = [
+          prescription.PatientFirstName,
+          prescription.PatientLastName,
+          prescription.ContactNumber,
+          prescription.MedicationName,
+          prescription.Concentration
+        ].join(' ').toLowerCase();
+        return searchable.includes(query);
+      });
+      const list = document.getElementById('list');
+      if (!rows.length) {
+        list.innerHTML = emptyState(query
+          ? 'No prescriptions match your search.'
+          : 'No pending prescriptions to dispense.');
+        return;
       }
-      const el = document.getElementById('list');
-      if (!pending.length) { el.innerHTML = emptyState('No pending prescriptions to dispense.'); return; }
-      el.innerHTML = `<div class="table-wrap"><table>
-        <thead><tr><th>Date</th><th>Patient</th><th>Medication</th><th>Dosage</th><th>Qty</th><th></th></tr></thead>
-        <tbody>${pending.map(p => {
-          const inv = db.Inventory.find(i => i.Inventory_ID === p.Inventory_ID);
-          const c = db.Consultations.find(x => x.Consultation_ID === p.Consultation_ID);
-          const a = c ? db.Appointments.find(x => x.Appointment_ID === c.Appointment_ID) : null;
-          const pat = a ? db.Patients.find(x => x.Patient_ID === a.Patient_ID) : null;
-          return `<tr>
-            <td>${formatDate(p.PrescribedDate.slice(0,10))}</td>
-            <td>${pat ? pat.FirstName + ' ' + pat.LastName : '—'}</td>
-            <td>${inv ? inv.MedicationName + ' ' + inv.Concentration : '—'}</td>
-            <td>${p.Dosage} · ${p.Frequency}</td>
-            <td class="mono">${p.QuantityDispensed || 1}</td>
-            <td><button class="btn btn-sm btn-primary dispense-btn" data-id="${p.Prescription_ID}">Dispense</button></td>
-          </tr>`;
-        }).join('')}</tbody></table></div>`;
-      el.querySelectorAll('.dispense-btn').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const d = DB.load();
-          const rx = d.Prescriptions.find(x => x.Prescription_ID === parseInt(btn.dataset.id, 10));
-          if (!rx) return;
-          const inv = d.Inventory.find(i => i.Inventory_ID === rx.Inventory_ID);
-          const qty = rx.QuantityDispensed || 1;
-          if (inv && inv.StockQuantity < qty) {
-            showBanner('form-banner', 'Medication prescribed not available in sufficient quantity (alternative flow).', 'error');
-            toast('Insufficient stock.', 'error'); return;
+      list.innerHTML = rows.map(prescription => {
+        const patient = [prescription.PatientFirstName, prescription.PatientLastName]
+          .filter(Boolean).join(' ');
+        const medication = [prescription.MedicationName, prescription.Concentration]
+          .filter(Boolean).join(' ');
+        return `<article class="prescription-card">
+          <div class="prescription-card__heading">
+            <div>
+              <p class="prescription-card__reference">Prescription #${escapeHtml(prescription.Prescription_ID)}</p>
+              <h4>${escapeHtml(medication) || 'Medication unavailable'}</h4>
+            </div>
+            <span class="badge badge-teal">${escapeHtml(prescription.Quantity)} unit(s)</span>
+          </div>
+          <dl class="prescription-details">
+            <div><dt>Patient</dt><dd>${escapeHtml(patient) || '—'}</dd></div>
+            <div><dt>Contact</dt><dd>${escapeHtml(prescription.ContactNumber) || '—'}</dd></div>
+            <div><dt>Prescribed</dt><dd>${formatDate(prescription.PrescribedDate)}</dd></div>
+            <div><dt>Available stock</dt><dd>${escapeHtml(prescription.StockQuantity)}</dd></div>
+            <div class="prescription-details__instructions"><dt>Instructions</dt><dd>${escapeHtml(prescription.DosageInstructions) || 'No instructions recorded'}</dd></div>
+          </dl>
+          <button type="button" class="btn btn-primary dispense-btn" data-id="${Number(prescription.Prescription_ID)}">Dispense medication</button>
+        </article>`;
+      }).join('');
+      list.querySelectorAll('.dispense-btn').forEach(button => {
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try {
+            await DB.dispense(Number(button.dataset.id));
+          } catch (err) {
+            button.disabled = false;
+            toast(apiErrorMessage(err), 'error');
+            return;
           }
-          if (inv) { inv.StockQuantity -= qty; inv.LastUpdated = nowISO(); }
-          rx.DispenseType = 'Given'; rx.DispensedDate = nowISO();
-          DB.save(d);
-          DB.logAudit(s.UserType, s.User_ID, 'Action', 'MedicationDispensed', { table: 'Prescription', recordId: rx.Prescription_ID });
-          toast('Medication dispensed. Inventory adjusted.', 'success');
-          render(document.getElementById('search').value);
+          toast('Prescription dispensed and inventory updated.', 'success');
+          document.getElementById('search').value = '';
+          await loadPrescriptions();
         });
       });
     }
-    render();
-    document.getElementById('search').addEventListener('input', e => render(e.target.value));
+    async function loadPrescriptions() {
+      const list = document.getElementById('list');
+      list.innerHTML = '<p>Loading prescriptions…</p>';
+      try {
+        prescriptions = await DB.getPrescriptions();
+        renderPrescriptions(document.getElementById('search').value);
+      } catch (err) {
+        list.innerHTML = emptyState(escapeHtml(apiErrorMessage(err)));
+      }
+    }
+    document.getElementById('search').addEventListener('input', event => {
+      renderPrescriptions(event.target.value);
+    });
+    loadPrescriptions();
   </script>
 </body>
 </html>

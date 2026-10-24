@@ -168,7 +168,9 @@ const DB = {
 
   // Pharmacy / Inventory
   async getInventory() { return API.get('/inventory'); },
-  async updateInventoryItem(id, payload) { return API.put('/inventory/' + id, payload); },
+  async createInventoryItem(payload) { return API.post('/inventory', payload); },
+  async getPrescriptions() { return API.get('/prescriptions'); },
+  async updateInventoryStock(id, quantity) { return API.patch('/inventory/' + id + '/stock', { quantity }); },
   async dispense(prescriptionId) { return API.post('/prescriptions/' + prescriptionId + '/dispense'); },
 
   // Payments

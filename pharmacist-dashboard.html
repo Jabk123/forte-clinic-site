@@ -15,7 +15,7 @@
       <div class="breadcrumb">PHARMACY · DASHBOARD</div>
       <h2 class="page-title">Pharmacy overview</h2>
       <p class="page-desc">Inventory status and dispensing queue.</p>
-      <div class="grid-3" id="stats"></div>
+      <div class="grid-4" id="stats" aria-live="polite"></div>
       <div class="card">
         <div class="card-head">
           <h3>Quick actions</h3>
@@ -35,13 +35,17 @@
     (async function () {
       const stats = document.getElementById('stats');
       try {
-        const inv = await DB.getInventory();
-        const items = Array.isArray(inv) ? inv : [];
+        const [inventory, prescriptions] = await Promise.all([
+          DB.getInventory(),
+          DB.getPrescriptions()
+        ]);
+        const items = inventory;
         const low = items.filter(i => Number(i.StockQuantity) <= Number(i.ReorderLevel || 0));
         stats.innerHTML = `
           <div class="stat"><div class="num">${items.length}</div><div class="label">Medications</div></div>
           <div class="stat"><div class="num">${low.length}</div><div class="label">Low stock</div></div>
-          <div class="stat"><div class="num">${items.reduce((s, i) => s + Number(i.StockQuantity || 0), 0)}</div><div class="label">Total units</div></div>`;
+          <div class="stat"><div class="num">${items.reduce((sum, item) => sum + Number(item.StockQuantity || 0), 0)}</div><div class="label">Total units</div></div>
+          <div class="stat"><div class="num">${prescriptions.length}</div><div class="label">Pending prescriptions</div></div>`;
       } catch (err) {
         stats.innerHTML = `<div class="card" style="grid-column:1/-1">${emptyState(apiErrorMessage(err))}</div>`;
       }

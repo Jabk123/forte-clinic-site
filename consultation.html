@@ -136,7 +136,15 @@
     const submitButton = document.querySelector('#consult-form button[type="submit"]');
     const diagnosisSelect = document.getElementById('diagnoseId');
     const inventorySelect = document.getElementById('invId');
+    const dosageInput = document.getElementById('dosage');
     const appointmentsById = new Map();
+
+    function syncDosageRequirement() {
+      dosageInput.required = Boolean(inventorySelect.value);
+      dosageInput.setAttribute('aria-required', String(dosageInput.required));
+    }
+    inventorySelect.addEventListener('change', syncDosageRequirement);
+    syncDosageRequirement();
 
     function escapeClinicalHtml(value) {
       return String(value).replace(/[&<>"']/g, char => ({
@@ -167,6 +175,11 @@
       }
 
       const inventoryId = inventorySelect.value ? Number(inventorySelect.value) : null;
+      if (inventoryId && !dosageInput.value.trim()) {
+        showBanner('form-banner', 'Enter the medication dosage before saving the prescription.', 'error');
+        dosageInput.focus();
+        return;
+      }
       const quantityInput = document.getElementById('qty').value;
       const quantity = quantityInput ? Number(quantityInput) : 1;
       if (inventoryId && (!Number.isInteger(quantity) || quantity < 1)) {
@@ -201,7 +214,7 @@
           DiagnosisReason: document.getElementById('diagReason').value.trim(),
           Inventory_ID: inventoryId,
           Quantity: quantity,
-          Dosage: document.getElementById('dosage').value.trim(),
+          Dosage: dosageInput.value.trim(),
           Frequency: document.getElementById('freq').value.trim(),
           PrescriptionDuration: document.getElementById('dur').value.trim(),
           DispenseType: document.getElementById('dispenseType').value,

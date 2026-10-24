@@ -18,16 +18,59 @@
 
       <div class="grid-3" id="stats"></div>
 
+      <section class="card" aria-labelledby="add-medication-title">
+        <div class="card-head"><h3 id="add-medication-title">Add medication</h3></div>
+        <p class="hint">Add a medication record with its starting stock and reorder level.</p>
+        <div id="inventory-banner" class="banner" role="status"></div>
+        <form id="inventory-form">
+          <div class="grid-2">
+            <div>
+              <label for="medication-name">Medication name <span class="req">*</span></label>
+              <input id="medication-name" name="MedicationName" type="text" maxlength="200" required>
+            </div>
+            <div>
+              <label for="medication-concentration">Strength / concentration</label>
+              <input id="medication-concentration" name="Concentration" type="text" maxlength="50" placeholder="e.g. 500 mg">
+            </div>
+            <div>
+              <label for="medication-type">Medication type</label>
+              <input id="medication-type" name="MedicationType" type="text" maxlength="100" placeholder="e.g. Tablet">
+            </div>
+            <div>
+              <label for="initial-stock">Starting quantity <span class="req">*</span></label>
+              <input id="initial-stock" name="StockQuantity" type="number" min="0" step="1" value="0" required>
+            </div>
+            <div>
+              <label for="unit-price">Unit price (R) <span class="req">*</span></label>
+              <input id="unit-price" name="UnitPrice" type="number" min="0" step="0.01" value="0" required>
+            </div>
+            <div>
+              <label for="reorder-level">Reorder level <span class="req">*</span></label>
+              <input id="reorder-level" name="ReorderLevel" type="number" min="0" step="1" value="0" required>
+            </div>
+            <div>
+              <label for="manufactured-date">Manufactured date</label>
+              <input id="manufactured-date" name="ManufacturedDate" type="date">
+            </div>
+            <div>
+              <label for="expiry-date">Expiry date</label>
+              <input id="expiry-date" name="ExpiryDate" type="date">
+            </div>
+          </div>
+          <div class="btn-row">
+            <button class="btn btn-primary" id="add-medication-button" type="submit">Add medication</button>
+          </div>
+        </form>
+      </section>
+
       <div class="card">
-        <div class="card-head">
-          <h3>Current stock</h3>
-        </div>
-        <div id="stock-list"></div>
+        <div class="card-head"><h3>Current stock</h3></div>
+        <div id="stock-list" aria-live="polite">Loading inventory…</div>
       </div>
 
       <div class="card">
-        <div class="card-head"><h3>Pending prescriptions (Prescribed)</h3></div>
-        <div id="rx-list"></div>
+        <div class="card-head"><h3>Pending prescriptions</h3></div>
+        <div id="rx-list" aria-live="polite">Loading prescriptions…</div>
       </div>
     </main>
   </div>
@@ -35,93 +78,163 @@
   <script src="js/app.js"></script>
   <script>
     window.PAGE_HELP = [
+      'Use Add medication to enter a new medication and its starting stock.',
+      'Use Update stock in the inventory row to set the current quantity.',
       'Items at or below reorder level are highlighted.',
       'Medications expiring within 30 days show an amber badge.',
-      'Dispensing from a “Prescribed” script reduces stock and marks the prescription as given.'
+      'Dispensing reduces stock and records the dispensing date.'
     ];
-    const s = Session.requireLogin(['Pharmacist', 'Admin', 'Doctor', 'Nurse']);
-    if (!s) throw new Error('redirect');
+    const session = Session.requireLogin(['Pharmacist', 'Admin']);
+    if (!session) throw new Error('redirect');
     renderChrome('pharmacy.html');
 
-    function render() {
-      const db = DB.load();
-      const low = db.Inventory.filter((i) => i.StockQuantity <= i.ReorderLevel);
-      const expiring = db.Inventory.filter((i) => {
-        const days = (new Date(i.ExpiryDate) - new Date()) / (1000 * 60 * 60 * 24);
-        return days <= 30 && days >= 0;
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>"']/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+      })[char]);
+    }
+    function daysUntil(date) {
+      if (!date) return null;
+      const expiry = new Date(String(date).slice(0, 10) + 'T00:00:00');
+      if (Number.isNaN(expiry.getTime())) return null;
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return Math.ceil((expiry - today) / 86400000);
+    }
+    function renderInventory(items) {
+      const low = items.filter(item => Number(item.StockQuantity) <= Number(item.ReorderLevel || 0));
+      const expiring = items.filter(item => {
+        const days = daysUntil(item.ExpiryDate);
+        return days !== null && days >= 0 && days <= 30;
       });
-
       document.getElementById('stats').innerHTML = `
-        <div class="stat"><div class="num">${db.Inventory.length}</div><div class="label">Medications</div></div>
+        <div class="stat"><div class="num">${items.length}</div><div class="label">Medications</div></div>
         <div class="stat"><div class="num">${low.length}</div><div class="label">Below reorder</div></div>
-        <div class="stat"><div class="num">${expiring.length}</div><div class="label">Expiring ≤30 days</div></div>
-      `;
+        <div class="stat"><div class="num">${expiring.length}</div><div class="label">Expiring within 30 days</div></div>`;
 
       const stockEl = document.getElementById('stock-list');
+      if (!items.length) {
+        stockEl.innerHTML = emptyState('No inventory records found.');
+        return;
+      }
       stockEl.innerHTML = `<div class="table-wrap"><table>
-        <thead><tr><th>Medication</th><th>Type</th><th>Stock</th><th>Unit price</th><th>Expiry</th><th>Status</th></tr></thead>
-        <tbody>${db.Inventory.map((i) => {
-          const days = (new Date(i.ExpiryDate) - new Date()) / (1000 * 60 * 60 * 24);
-          let status = '';
-          if (i.StockQuantity <= i.ReorderLevel) status += statusBadge('Low stock') + ' ';
-          if (days <= 30 && days >= 0) status += statusBadge('Expiring');
-          if (days < 0) status += statusBadge('Expired');
+        <thead><tr><th>Medication</th><th>Type</th><th>Stock</th><th>Unit price</th><th>Expiry</th><th>Status</th><th>Adjust quantity</th></tr></thead>
+        <tbody>${items.map(item => {
+          const days = daysUntil(item.ExpiryDate);
+          const status = [];
+          if (Number(item.StockQuantity) <= Number(item.ReorderLevel || 0)) status.push(statusBadge('Low stock'));
+          if (days !== null && days >= 0 && days <= 30) status.push(statusBadge('Expiring'));
+          if (days !== null && days < 0) status.push(statusBadge('Expired'));
+          const name = [item.MedicationName, item.Concentration].filter(Boolean).join(' ');
           return `<tr>
-            <td><strong>${i.MedicationName}</strong><br><span class="mono" style="font-size:.8rem">${i.Concentration}</span></td>
-            <td>${i.MedicationType}</td>
-            <td class="mono">${i.StockQuantity}</td>
-            <td class="mono">${formatCurrency(i.UnitPrice)}</td>
-            <td>${formatDate(i.ExpiryDate)}</td>
-            <td>${status || '—'}</td>
+            <td><strong>${escapeHtml(name)}</strong></td>
+            <td>${escapeHtml(item.MedicationType) || '—'}</td>
+            <td class="mono">${escapeHtml(item.StockQuantity)}</td>
+            <td class="mono">${formatCurrency(item.UnitPrice)}</td>
+            <td>${formatDate(item.ExpiryDate)}</td>
+            <td>${status.join(' ') || '—'}</td>
+            <td>
+              <form class="stock-update-form" data-id="${Number(item.Inventory_ID)}">
+                <input id="stock-${Number(item.Inventory_ID)}" name="quantity" type="number" min="0" step="1" value="${Number(item.StockQuantity)}" aria-label="New stock quantity for ${escapeHtml(name)}" required>
+                <button class="btn btn-sm btn-ghost" type="submit">Update stock</button>
+              </form>
+            </td>
           </tr>`;
         }).join('')}</tbody></table></div>`;
-
-      const pending = db.Prescriptions.filter((p) => p.DispenseType === 'Prescribed' && !p.DispensedDate);
-      const rxEl = document.getElementById('rx-list');
-      if (!pending.length) {
-        rxEl.innerHTML = emptyState('No pending prescriptions to dispense.');
-      } else {
-        rxEl.innerHTML = `<div class="table-wrap"><table>
-          <thead><tr><th>Date</th><th>Medication</th><th>Dosage</th><th>Qty</th><th></th></tr></thead>
-          <tbody>${pending.map((p) => {
-            const inv = db.Inventory.find((i) => i.Inventory_ID === p.Inventory_ID);
-            return `<tr>
-              <td>${formatDate(p.PrescribedDate.slice(0,10))}</td>
-              <td>${inv ? inv.MedicationName + ' ' + inv.Concentration : '—'}</td>
-              <td>${p.Dosage} · ${p.Frequency}</td>
-              <td class="mono">${p.QuantityDispensed || 1}</td>
-              <td><button class="btn btn-sm btn-primary dispense-btn" data-id="${p.Prescription_ID}">Dispense</button></td>
-            </tr>`;
-          }).join('')}</tbody></table></div>`;
-
-        rxEl.querySelectorAll('.dispense-btn').forEach((btn) => {
-          btn.addEventListener('click', () => {
-            const d = DB.load();
-            const rx = d.Prescriptions.find((x) => x.Prescription_ID === parseInt(btn.dataset.id, 10));
-            if (!rx) return;
-            const inv = d.Inventory.find((i) => i.Inventory_ID === rx.Inventory_ID);
-            const qty = rx.QuantityDispensed || 1;
-            if (inv && inv.StockQuantity < qty) {
-              toast('Insufficient stock.', 'error');
-              return;
-            }
-            if (inv) {
-              inv.StockQuantity -= qty;
-              inv.LastUpdated = nowISO();
-            }
-            rx.DispenseType = 'Given';
-            rx.DispensedDate = nowISO();
-            DB.save(d);
-            DB.logAudit(s.UserType, s.User_ID, 'Action', 'PrescriptionDispensed', {
-              table: 'Prescription', recordId: rx.Prescription_ID
-            });
-            toast('Medication dispensed.', 'success');
-            render();
-          });
+      stockEl.querySelectorAll('.stock-update-form').forEach(form => {
+        form.addEventListener('submit', async event => {
+          event.preventDefault();
+          const button = form.querySelector('button');
+          button.disabled = true;
+          try {
+            await DB.updateInventoryStock(
+              Number(form.dataset.id),
+              Number(new FormData(form).get('quantity'))
+            );
+            toast('Stock quantity updated.', 'success');
+            await loadPharmacy();
+          } catch (err) {
+            button.disabled = false;
+            showBanner('inventory-banner', apiErrorMessage(err), 'error');
+          }
         });
-      }
+      });
     }
-    render();
+    function renderPrescriptions(prescriptions) {
+      const rxEl = document.getElementById('rx-list');
+      if (!prescriptions.length) {
+        rxEl.innerHTML = emptyState('No pending prescriptions to dispense.');
+        return;
+      }
+      rxEl.innerHTML = `<div class="table-wrap"><table>
+        <thead><tr><th>Date</th><th>Patient</th><th>Medication</th><th>Instructions</th><th>Qty</th><th>Stock</th><th></th></tr></thead>
+        <tbody>${prescriptions.map(prescription => `<tr>
+          <td>${formatDate(prescription.PrescribedDate)}</td>
+          <td>${escapeHtml([prescription.PatientFirstName, prescription.PatientLastName].filter(Boolean).join(' ')) || '—'}</td>
+          <td>${escapeHtml([prescription.MedicationName, prescription.Concentration].filter(Boolean).join(' '))}</td>
+          <td>${escapeHtml(prescription.DosageInstructions) || '—'}</td>
+          <td class="mono">${escapeHtml(prescription.Quantity)}</td>
+          <td class="mono">${escapeHtml(prescription.StockQuantity)}</td>
+          <td><button type="button" class="btn btn-sm btn-primary dispense-btn" data-id="${Number(prescription.Prescription_ID)}">Dispense</button></td>
+        </tr>`).join('')}</tbody></table></div>`;
+      rxEl.querySelectorAll('.dispense-btn').forEach(button => {
+        button.addEventListener('click', async () => {
+          button.disabled = true;
+          try {
+            await DB.dispense(Number(button.dataset.id));
+            toast('Prescription dispensed and inventory updated.', 'success');
+            await loadPharmacy();
+          } catch (err) {
+            button.disabled = false;
+            toast(apiErrorMessage(err), 'error');
+          }
+        });
+      });
+    }
+    async function loadPharmacy() {
+      const [inventory, prescriptions] = await Promise.all([
+        DB.getInventory(),
+        DB.getPrescriptions()
+      ]);
+      renderInventory(inventory);
+      renderPrescriptions(prescriptions);
+    }
+    document.getElementById('inventory-form').addEventListener('submit', async event => {
+      event.preventDefault();
+      const form = event.currentTarget;
+      const button = document.getElementById('add-medication-button');
+      const values = new FormData(form);
+      button.disabled = true;
+      try {
+        await DB.createInventoryItem({
+          MedicationName: values.get('MedicationName'),
+          Concentration: values.get('Concentration'),
+          MedicationType: values.get('MedicationType'),
+          StockQuantity: Number(values.get('StockQuantity')),
+          UnitPrice: Number(values.get('UnitPrice')),
+          ReorderLevel: Number(values.get('ReorderLevel')),
+          ManufacturedDate: values.get('ManufacturedDate') || null,
+          ExpiryDate: values.get('ExpiryDate') || null
+        });
+        form.reset();
+        showBanner('inventory-banner', 'Medication added to inventory.', 'success');
+        await loadPharmacy();
+      } catch (err) {
+        showBanner('inventory-banner', apiErrorMessage(err), 'error');
+      } finally {
+        button.disabled = false;
+      }
+    });
+    loadPharmacy().catch(err => {
+      const message = escapeHtml(apiErrorMessage(err));
+      document.getElementById('stats').innerHTML = `<div class="card" style="grid-column:1/-1">${emptyState(message)}</div>`;
+      document.getElementById('stock-list').innerHTML = emptyState(message);
+      document.getElementById('rx-list').innerHTML = emptyState(message);
+    });
   </script>
 </body>
 </html>

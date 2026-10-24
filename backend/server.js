@@ -103,6 +103,20 @@ async function getTableColumns(db, tableName) {
   return result.recordset;
 }
 
+function prescriptionDispensedExpression(columnNames, alias = '') {
+  const prefix = alias ? `${alias}.` : '';
+  if (columnNames.has('IsDispensed')) {
+    return `COALESCE(${prefix}IsDispensed, 0) = 1`;
+  }
+  if (columnNames.has('DispenseType')) {
+    return `UPPER(COALESCE(NULLIF(LTRIM(RTRIM(${prefix}DispenseType)), ''), 'PRESCRIBED')) = 'GIVEN'`;
+  }
+  if (columnNames.has('DispensedDate')) {
+    return `${prefix}DispensedDate IS NOT NULL`;
+  }
+  return null;
+}
+
 // Simple health check
 app.get('/api/health', async (_req, res) => {
   try {
@@ -779,6 +793,282 @@ app.get('/api/inventory', authMiddleware, async (_req, res) => {
   }
 });
 
+app.post('/api/inventory', authMiddleware, async (req, res) => {
+  if (!['Admin', 'Pharmacist'].includes(req.user.role)) {
+    return res.status(403).json({ message: 'Only pharmacists and admins can add inventory' });
+  }
+  const body = req.body || {};
+  const medicationName = String(body.MedicationName || '').trim();
+  const concentration = String(body.Concentration || '').trim();
+  const medicationType = String(body.MedicationType || '').trim();
+  const stockQuantity = Number(body.StockQuantity);
+  const unitPrice = Number(body.UnitPrice);
+  const reorderLevel = Number(body.ReorderLevel);
+  const manufacturedDate = body.ManufacturedDate || null;
+  const expiryDate = body.ExpiryDate || null;
+  const isValidDate = value => !value || (
+    /^\d{4}-\d{2}-\d{2}$/.test(String(value)) &&
+    !Number.isNaN(new Date(`${value}T00:00:00Z`).getTime()) &&
+    new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) === value
+  );
+
+  if (!medicationName || medicationName.length > 200) {
+    return res.status(400).json({ message: 'Medication name is required and must be 200 characters or fewer' });
+  }
+  if (concentration.length > 50 || medicationType.length > 100) {
+    return res.status(400).json({ message: 'Concentration must be 50 characters or fewer and type 100 or fewer' });
+  }
+  if (!Number.isInteger(stockQuantity) || stockQuantity < 0 ||
+      !Number.isInteger(reorderLevel) || reorderLevel < 0 ||
+      !Number.isFinite(unitPrice) || unitPrice < 0 ||
+      !isValidDate(manufacturedDate) || !isValidDate(expiryDate)) {
+    return res.status(400).json({ message: 'Enter valid non-negative stock, reorder level, price, and dates' });
+  }
+  if (manufacturedDate && expiryDate && manufacturedDate > expiryDate) {
+    return res.status(400).json({ message: 'Expiry date must be on or after the manufactured date' });
+  }
+
+  try {
+    const db = await getPool();
+    const result = await db.request()
+      .input('MedicationName', sql.NVarChar(200), medicationName)
+      .input('Concentration', sql.NVarChar(50), concentration || null)
+      .input('MedicationType', sql.NVarChar(100), medicationType || null)
+      .input('ManufacturedDate', sql.Date, manufacturedDate)
+      .input('ExpiryDate', sql.Date, expiryDate)
+      .input('StockQuantity', sql.Int, stockQuantity)
+      .input('UnitPrice', sql.Decimal(12, 2), unitPrice)
+      .input('ReorderLevel', sql.Int, reorderLevel)
+      .query(`
+        INSERT INTO Inventory
+          (MedicationName, Concentration, MedicationType, ManufacturedDate, ExpiryDate,
+           StockQuantity, UnitPrice, ReorderLevel)
+        OUTPUT INSERTED.*
+        VALUES
+          (@MedicationName, @Concentration, @MedicationType, @ManufacturedDate, @ExpiryDate,
+           @StockQuantity, @UnitPrice, @ReorderLevel)
+      `);
+    const item = result.recordset[0];
+    await writeAuditEvent(req, {
+      userType: req.user.type,
+      userId: req.user.id,
+      category: 'Action',
+      action: 'Add medication inventory',
+      table: 'Inventory',
+      recordId: item.Inventory_ID,
+      details: `Added ${medicationName} with ${stockQuantity} unit(s)`
+    });
+    res.status(201).json(item);
+  } catch (err) {
+    console.error('Unable to add inventory item:', err);
+    res.status(500).json({ message: err.message || 'Unable to add medication' });
+  }
+});
+
+app.patch('/api/inventory/:id/stock', authMiddleware, async (req, res) => {
+  if (!['Admin', 'Pharmacist'].includes(req.user.role)) {
+    return res.status(403).json({ message: 'Only pharmacists and admins can update stock' });
+  }
+  const inventoryId = Number(req.params.id);
+  const stockQuantity = Number((req.body || {}).quantity);
+  if (!Number.isInteger(inventoryId) || inventoryId <= 0) {
+    return res.status(400).json({ message: 'Invalid inventory ID' });
+  }
+  if (!Number.isInteger(stockQuantity) || stockQuantity < 0) {
+    return res.status(400).json({ message: 'Stock quantity must be a non-negative whole number' });
+  }
+
+  try {
+    const db = await getPool();
+    const result = await db.request()
+      .input('Inventory_ID', sql.Int, inventoryId)
+      .input('StockQuantity', sql.Int, stockQuantity)
+      .query(`
+        UPDATE Inventory
+        SET StockQuantity = @StockQuantity, LastUpdated = SYSUTCDATETIME()
+        OUTPUT INSERTED.*
+        WHERE Inventory_ID = @Inventory_ID
+      `);
+    if (!result.recordset.length) {
+      return res.status(404).json({ message: 'Inventory item not found' });
+    }
+    await writeAuditEvent(req, {
+      userType: req.user.type,
+      userId: req.user.id,
+      category: 'Action',
+      action: 'Update medication stock',
+      table: 'Inventory',
+      recordId: inventoryId,
+      details: `Set stock quantity to ${stockQuantity}`
+    });
+    res.json(result.recordset[0]);
+  } catch (err) {
+    console.error('Unable to update inventory stock:', err);
+    res.status(500).json({ message: err.message || 'Unable to update stock quantity' });
+  }
+});
+
+app.get('/api/prescriptions', authMiddleware, async (req, res) => {
+  if (!['Admin', 'Pharmacist'].includes(req.user.role)) {
+    return res.status(403).json({ message: 'Only pharmacists and admins can view prescriptions' });
+  }
+  try {
+    const db = await getPool();
+    const columns = await getTableColumns(db, 'Prescription');
+    const prescriptionColumns = new Set(columns.map(column => column.ColumnName));
+    const dispensedExpression = prescriptionDispensedExpression(prescriptionColumns, 'pr');
+    if (!dispensedExpression) {
+      return res.status(500).json({ message: 'Prescription table has no supported dispensing status column' });
+    }
+    const dispensedDateExpression = prescriptionColumns.has('DispensedDate')
+      ? 'pr.DispensedDate'
+      : 'NULL';
+    const instructionColumns = [
+      'DosageInstructions',
+      'Dosage',
+      'Frequency',
+      'PrescriptionDuration',
+      'Duration',
+      'Instructions'
+    ].filter(column => prescriptionColumns.has(column));
+    const instructionExpression = instructionColumns.length
+      ? `COALESCE(${instructionColumns
+          .map(column => `NULLIF(LTRIM(RTRIM(CONVERT(nvarchar(500), pr.[${column}]))), '')`)
+          .join(', ')})`
+      : 'NULL';
+    const result = await db.request().query(`
+      SELECT pr.Prescription_ID, pr.Consultation_ID, pr.Inventory_ID,
+             pr.Quantity, ${instructionExpression} AS DosageInstructions,
+             CASE WHEN ${dispensedExpression} THEN 1 ELSE 0 END AS IsDispensed,
+             ${dispensedDateExpression} AS DispensedDate,
+             CONVERT(char(10), c.ConsultationDate, 23) AS PrescribedDate,
+             i.MedicationName, i.Concentration, i.StockQuantity,
+             p.FirstName AS PatientFirstName, p.LastName AS PatientLastName,
+             p.ContactNumber
+      FROM Prescription pr
+      INNER JOIN Consultation c ON c.Consultation_ID = pr.Consultation_ID
+      INNER JOIN Patient p ON p.Patient_ID = c.Patient_ID
+      INNER JOIN Inventory i ON i.Inventory_ID = pr.Inventory_ID
+      WHERE NOT (${dispensedExpression})
+      ORDER BY c.ConsultationDate DESC, pr.Prescription_ID DESC
+    `);
+    res.json(result.recordset);
+  } catch (err) {
+    res.status(500).json({ message: err.message });
+  }
+});
+
+app.post('/api/prescriptions/:id/dispense', authMiddleware, async (req, res) => {
+  if (!['Admin', 'Pharmacist'].includes(req.user.role)) {
+    return res.status(403).json({ message: 'Only pharmacists and admins can dispense medication' });
+  }
+  const prescriptionId = Number(req.params.id);
+  if (!Number.isInteger(prescriptionId) || prescriptionId <= 0) {
+    return res.status(400).json({ message: 'Invalid prescription ID' });
+  }
+
+  let transaction;
+  let transactionStarted = false;
+  try {
+    const db = await getPool();
+    const prescriptionColumns = await getTableColumns(db, 'Prescription');
+    const columnNames = new Set(prescriptionColumns.map(column => column.ColumnName));
+    const dispensedExpression = prescriptionDispensedExpression(columnNames);
+    if (!dispensedExpression) {
+      return res.status(500).json({ message: 'Prescription table has no supported dispensing status column' });
+    }
+    const statusUpdates = [];
+    if (columnNames.has('IsDispensed')) statusUpdates.push('IsDispensed = 1');
+    if (columnNames.has('DispenseType')) statusUpdates.push("DispenseType = 'Given'");
+    if (columnNames.has('DispensedDate')) statusUpdates.push('DispensedDate = SYSUTCDATETIME()');
+    if (!statusUpdates.length) {
+      return res.status(500).json({ message: 'Prescription table has no supported dispensing status column' });
+    }
+    transaction = new sql.Transaction(db);
+    await transaction.begin(sql.ISOLATION_LEVEL.SERIALIZABLE);
+    transactionStarted = true;
+
+    const prescriptionResult = await transaction.request()
+      .input('Prescription_ID', sql.Int, prescriptionId)
+      .query(`
+        SELECT pr.Prescription_ID, pr.Consultation_ID, pr.Inventory_ID, pr.Quantity,
+               CASE WHEN ${prescriptionDispensedExpression(columnNames, 'pr')} THEN 1 ELSE 0 END AS IsDispensed
+        FROM Prescription pr WITH (UPDLOCK, HOLDLOCK)
+        WHERE pr.Prescription_ID = @Prescription_ID
+      `);
+    const prescription = prescriptionResult.recordset[0];
+    if (!prescription) {
+      await transaction.rollback();
+      transactionStarted = false;
+      return res.status(404).json({ message: 'Prescription not found' });
+    }
+    if (prescription.IsDispensed) {
+      await transaction.rollback();
+      transactionStarted = false;
+      return res.status(409).json({ message: 'This prescription has already been dispensed' });
+    }
+
+    const inventoryResult = await transaction.request()
+      .input('Inventory_ID', sql.Int, prescription.Inventory_ID)
+      .query(`
+        SELECT Inventory_ID, MedicationName, StockQuantity
+        FROM Inventory WITH (UPDLOCK, HOLDLOCK)
+        WHERE Inventory_ID = @Inventory_ID
+      `);
+    const inventory = inventoryResult.recordset[0];
+    if (!inventory) {
+      await transaction.rollback();
+      transactionStarted = false;
+      return res.status(404).json({ message: 'Prescribed medication was not found in inventory' });
+    }
+    if (inventory.StockQuantity < prescription.Quantity) {
+      await transaction.rollback();
+      transactionStarted = false;
+      return res.status(409).json({ message: 'Insufficient stock to dispense this prescription' });
+    }
+
+    await transaction.request()
+      .input('Inventory_ID', sql.Int, prescription.Inventory_ID)
+      .input('Quantity', sql.Int, prescription.Quantity)
+      .query(`
+        UPDATE Inventory
+        SET StockQuantity = StockQuantity - @Quantity,
+            LastUpdated = SYSUTCDATETIME()
+        WHERE Inventory_ID = @Inventory_ID AND StockQuantity >= @Quantity
+      `);
+    const updated = await transaction.request()
+      .input('Prescription_ID', sql.Int, prescriptionId)
+      .query(`
+        UPDATE Prescription
+        SET ${statusUpdates.join(', ')}
+        OUTPUT INSERTED.Prescription_ID, INSERTED.Inventory_ID, INSERTED.Quantity
+        WHERE Prescription_ID = @Prescription_ID AND NOT (${dispensedExpression})
+      `);
+    if (!updated.recordset.length) {
+      await transaction.rollback();
+      transactionStarted = false;
+      return res.status(409).json({ message: 'This prescription has already been dispensed' });
+    }
+
+    await transaction.commit();
+    transactionStarted = false;
+    await writeAuditEvent(req, {
+      userType: req.user.type,
+      userId: req.user.id,
+      category: 'Action',
+      action: 'Dispense prescription',
+      table: 'Prescription',
+      recordId: prescriptionId,
+      details: `Dispensed ${prescription.Quantity} unit(s) of ${inventory.MedicationName}`
+    });
+    res.json({ ...updated.recordset[0], IsDispensed: true });
+  } catch (err) {
+    if (transactionStarted) await transaction.rollback();
+    console.error('Unable to dispense prescription:', err);
+    res.status(500).json({ message: err.message || 'Unable to dispense prescription' });
+  }
+});
+
 app.get('/api/diagnoses', authMiddleware, async (req, res) => {
   try {
     if (!['Admin', 'Manager', 'Doctor', 'Nurse'].includes(req.user.role)) {
@@ -893,6 +1183,10 @@ app.post('/api/consultations', authMiddleware, async (req, res) => {
   }
   if (inventoryId !== null && (!Number.isInteger(quantity) || quantity < 1)) {
     return res.status(400).json({ message: 'Medication quantity must be a positive whole number' });
+  }
+  const dosage = String(body.Dosage || '').trim();
+  if (inventoryId !== null && !dosage) {
+    return res.status(400).json({ message: 'Enter the medication dosage before saving the prescription' });
   }
   if (heartRate !== null && (!Number.isInteger(heartRate) || heartRate < 1 || heartRate > 300)) {
     return res.status(400).json({ message: 'Heart rate must be a whole number between 1 and 300' });
@@ -1049,23 +1343,74 @@ app.post('/api/consultations', authMiddleware, async (req, res) => {
 
     if (inventoryId !== null) {
       const dosageInstructions = [
-        body.Dosage ? `Dosage: ${String(body.Dosage).trim()}` : null,
+        dosage ? `Dosage: ${dosage}` : null,
         body.Frequency ? `Frequency: ${String(body.Frequency).trim()}` : null,
         body.PrescriptionDuration ? `Duration: ${String(body.PrescriptionDuration).trim()}` : null,
         body.Instructions ? `Instructions: ${String(body.Instructions).trim()}` : null
       ].filter(Boolean).join('; ').slice(0, 500);
       const isDispensed = dispenseType === 'Given';
-      await transaction.request()
-        .input('Consultation_ID', sql.Int, consultation.Consultation_ID)
-        .input('Inventory_ID', sql.Int, inventoryId)
-        .input('Quantity', sql.Int, quantity)
-        .input('DosageInstructions', sql.NVarChar(500), dosageInstructions || null)
-        .input('IsDispensed', sql.Bit, isDispensed)
-        .query(`
-          INSERT INTO Prescription (Consultation_ID, Inventory_ID, Quantity, DosageInstructions, IsDispensed, DispensedDate)
-          VALUES (@Consultation_ID, @Inventory_ID, @Quantity, @DosageInstructions, @IsDispensed,
-                  CASE WHEN @IsDispensed = 1 THEN SYSUTCDATETIME() ELSE NULL END)
-        `);
+      const prescriptionColumns = await getTableColumns(db, 'Prescription');
+      const prescriptionColumnNames = new Set(prescriptionColumns.map(column => column.ColumnName));
+      const prescriptionValues = {
+        Consultation_ID: { type: sql.Int, value: consultation.Consultation_ID },
+        Inventory_ID: { type: sql.Int, value: inventoryId },
+        Quantity: { type: sql.Int, value: quantity },
+        DosageInstructions: { type: sql.NVarChar(500), value: dosageInstructions || null },
+        Dosage: { type: sql.NVarChar(500), value: dosage },
+        Frequency: { type: sql.NVarChar(100), value: String(body.Frequency || '').trim() || null },
+        PrescriptionDuration: { type: sql.NVarChar(100), value: String(body.PrescriptionDuration || '').trim() || null },
+        Duration: { type: sql.NVarChar(100), value: String(body.PrescriptionDuration || '').trim() || null },
+        Instructions: { type: sql.NVarChar(500), value: String(body.Instructions || '').trim() || null },
+        DispenseType: { type: sql.NVarChar(30), value: dispenseType },
+        PrescribedDate: { type: sql.DateTime2, value: new Date() },
+        IsDispensed: { type: sql.Bit, value: isDispensed },
+        DispensedDate: { type: sql.DateTime2, value: isDispensed ? new Date() : null }
+      };
+      const insertablePrescriptionFields = Object.entries(prescriptionValues)
+        .filter(([columnName, field]) =>
+          prescriptionColumnNames.has(columnName) && field.value != null
+        );
+      const missingPrescriptionColumns = prescriptionColumns
+        .filter(column =>
+          column.IsNullable === 'NO' &&
+          column.ColumnDefault === null &&
+          column.ColumnName !== 'Prescription_ID' &&
+          !insertablePrescriptionFields.some(([name]) => name === column.ColumnName)
+        )
+        .map(column => column.ColumnName);
+      if (missingPrescriptionColumns.length) {
+        await transaction.rollback();
+        transactionStarted = false;
+        const instructionFields = [
+          'DosageInstructions',
+          'Dosage',
+          'Frequency',
+          'PrescriptionDuration',
+          'Duration',
+          'Instructions'
+        ];
+        const missingInstructions = missingPrescriptionColumns.filter(column =>
+          instructionFields.includes(column)
+        );
+        if (missingInstructions.length) {
+          return res.status(400).json({
+            message: `Enter the required prescription details: ${missingInstructions.join(', ')}`
+          });
+        }
+        return res.status(500).json({
+          message: `Prescription table requires unsupported fields: ${missingPrescriptionColumns.join(', ')}`
+        });
+      }
+      const prescriptionRequest = transaction.request();
+      for (const [columnName, field] of insertablePrescriptionFields) {
+        prescriptionRequest.input(columnName, field.type, field.value);
+      }
+      await prescriptionRequest.query(`
+        INSERT INTO Prescription
+          (${insertablePrescriptionFields.map(([columnName]) => `[${columnName}]`).join(', ')})
+        VALUES
+          (${insertablePrescriptionFields.map(([columnName]) => `@${columnName}`).join(', ')})
+      `);
       if (isDispensed) {
         await transaction.request()
           .input('Inventory_ID', sql.Int, inventoryId)
