@@ -30,6 +30,15 @@
       </div>
       <p style="margin-top:16px;font-size:1rem;"><a class="linklike" href="#" id="forgot-link">Forgot password?</a></p>
     </form>
+    <form id="forgot-form" hidden novalidate>
+      <h3>Reset your password</h3>
+      <p class="page-desc">Enter your clinic account email. If an active account matches, we’ll send a reset link.</p>
+      <div id="reset-request-banner" class="banner"></div>
+      <div class="btn-row">
+        <button type="submit" class="btn btn-primary" id="reset-request-btn">Send reset link</button>
+        <button type="button" class="btn btn-ghost" id="back-to-login">Back to sign in</button>
+      </div>
+    </form>
   </div>
   <script src="js/app.js"></script>
   <script>
@@ -73,9 +82,40 @@
       }
     });
 
+    const forgotForm = document.getElementById('forgot-form');
     document.getElementById('forgot-link').addEventListener('click', (e) => {
       e.preventDefault();
-      toast('Password reset will be available once the email service is configured on the server.', '');
+      forgotForm.hidden = false;
+      document.getElementById('login-form').hidden = true;
+      document.getElementById('reset-request-banner').textContent = '';
+      email.focus();
+    });
+
+    document.getElementById('back-to-login').addEventListener('click', () => {
+      forgotForm.hidden = true;
+      document.getElementById('login-form').hidden = false;
+      email.focus();
+    });
+
+    forgotForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const button = document.getElementById('reset-request-btn');
+      if (!checkEmail()) {
+        showBanner('reset-request-banner', 'Enter a valid email address.', 'error');
+        return;
+      }
+
+      button.disabled = true;
+      button.textContent = 'Sending…';
+      try {
+        const result = await DB.requestPasswordReset(email.value.trim().toLowerCase());
+        showBanner('reset-request-banner', result.message, 'success');
+      } catch (err) {
+        showBanner('reset-request-banner', apiErrorMessage(err), 'error');
+      } finally {
+        button.disabled = false;
+        button.textContent = 'Send reset link';
+      }
     });
   </script>
 </body>

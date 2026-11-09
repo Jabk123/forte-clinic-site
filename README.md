@@ -132,6 +132,10 @@ Recommended starting point for SQL Server:
 3. Set `DB_CONNECTION_STRING` and `JWT_SECRET` as **Application Settings** (environment variables) — never in source control.
 4. Point the GitHub Pages frontend at the App Service URL.
 
+### Password reset email
+
+Password recovery requires the additive SQL migration at `backend/sql/migrations/20261021_password_reset_tokens.sql` and Gmail SMTP credentials configured on the backend. Enable 2-Step Verification for the sending Gmail account and create a Google App Password. Set `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=587`, `SMTP_SECURE=false`, `SMTP_USER` and `SMTP_FROM` to that Gmail address, and `SMTP_PASS` to the app password. Set `PUBLIC_APP_URL` to the frontend base URL (for local development, `http://127.0.0.1:5500`). Keep the app password in backend `.env` or hosting environment settings only; never put it in frontend code or send it in chat. Restart the backend after changing environment settings.
+
 ---
 
 ## 6. Frontend configuration checklist

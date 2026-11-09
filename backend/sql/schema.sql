@@ -35,6 +35,19 @@ CREATE UNIQUE INDEX UQ_Employee_HPCSANumber_NotNull
   ON Employee (HPCSANumber)
   WHERE HPCSANumber IS NOT NULL;
 
+CREATE TABLE PasswordResetToken (
+  Token_ID     BIGINT IDENTITY(1,1) PRIMARY KEY,
+  UserType     NVARCHAR(20) NOT NULL CHECK (UserType IN ('Patient', 'Employee')),
+  User_ID      INT NOT NULL,
+  TokenHash    CHAR(64) NOT NULL UNIQUE,
+  ExpiresAt    DATETIME2 NOT NULL,
+  CreatedAt    DATETIME2 NOT NULL DEFAULT SYSUTCDATETIME(),
+  UsedAt       DATETIME2 NULL
+);
+
+CREATE INDEX IX_PasswordResetToken_User_Created
+  ON PasswordResetToken (UserType, User_ID, CreatedAt DESC);
+
 CREATE TABLE Appointment (
   Appointment_ID    INT IDENTITY(1,1) PRIMARY KEY,
   Patient_ID        INT NOT NULL REFERENCES Patient(Patient_ID),

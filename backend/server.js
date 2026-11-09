@@ -15,6 +15,8 @@ const cors = require('cors');
 const sql = require('mssql');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const nodemailer = require('nodemailer');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -148,6 +150,215 @@ function authMiddleware(req, res, next) {
     return res.status(401).json({ message: 'Invalid or expired token' });
   }
 }
+
+function getPasswordResetMailer() {
+  const required = ['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS', 'SMTP_FROM', 'PUBLIC_APP_URL'];
+  const missing = required.filter(name => !process.env[name]);
+  if (missing.length) {
+    throw new Error('Password reset email is not configured. Set the SMTP and PUBLIC_APP_URL environment variables.');
+  }
+
+  const port = Number(process.env.SMTP_PORT);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('SMTP_PORT must be a valid TCP port.');
+  }
+
+  let appUrl;
+  try { appUrl = new URL(process.env.PUBLIC_APP_URL); } catch {
+    throw new Error('PUBLIC_APP_URL must be a valid URL.');
+  }
+  if (!['http:', 'https:'].includes(appUrl.protocol)) {
+    throw new Error('PUBLIC_APP_URL must use HTTP or HTTPS.');
+  }
+  appUrl.search = '';
+  appUrl.hash = '';
+
+  return {
+    appUrl,
+    mailer: nodemailer.createTransport({
+      host: process.env.SMTP_HOST,
+      port,
+      secure: String(process.env.SMTP_SECURE || '').toLowerCase() === 'true',
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS }
+    })
+  };
+}
+
+app.post('/api/auth/forgot-password', async (req, res) => {
+  try {
+    const email = String((req.body || {}).email || '').trim().toLowerCase();
+    if (!email || email.length > 255 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return res.status(400).json({ message: 'Enter a valid email address.' });
+    }
+
+    const { mailer, appUrl } = getPasswordResetMailer();
+    try {
+      await mailer.verify();
+    } catch (mailError) {
+      console.error('Password reset SMTP verification failed:', {
+        code: mailError.code || 'unknown',
+        responseCode: mailError.responseCode || null,
+        command: mailError.command || null
+      });
+      const smtpError = new Error('The SMTP server rejected the password reset email configuration.');
+      smtpError.status = 503;
+      throw smtpError;
+    }
+
+    const db = await getPool();
+    const result = await db.request()
+      .input('Email', sql.NVarChar(255), email)
+      .query(`
+        SELECT TOP (1) UserType, User_ID, Email
+        FROM (
+          SELECT 'Patient' AS UserType, Patient_ID AS User_ID, Email
+          FROM Patient
+          WHERE LOWER(Email) = @Email AND IsActive = 1
+          UNION ALL
+          SELECT 'Employee' AS UserType, Employee_ID AS User_ID, Email
+          FROM Employee
+          WHERE LOWER(Email) = @Email AND IsActive = 1
+        ) AS Accounts
+        ORDER BY CASE UserType WHEN 'Patient' THEN 0 ELSE 1 END
+      `);
+    const user = result.recordset[0];
+
+    if (user) {
+      const recent = await db.request()
+        .input('UserType', sql.NVarChar(20), user.UserType)
+        .input('User_ID', sql.Int, user.User_ID)
+        .query(`
+          SELECT TOP (1) Token_ID
+          FROM PasswordResetToken
+          WHERE UserType = @UserType AND User_ID = @User_ID
+            AND CreatedAt > DATEADD(MINUTE, -1, SYSUTCDATETIME())
+        `);
+
+      if (!recent.recordset.length) {
+        const token = crypto.randomBytes(32).toString('hex');
+        const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+        await db.request()
+          .input('UserType', sql.NVarChar(20), user.UserType)
+          .input('User_ID', sql.Int, user.User_ID)
+          .input('TokenHash', sql.Char(64), tokenHash)
+          .query(`
+            DELETE FROM PasswordResetToken
+            WHERE ExpiresAt < DATEADD(DAY, -30, SYSUTCDATETIME());
+
+            UPDATE PasswordResetToken
+            SET UsedAt = SYSUTCDATETIME()
+            WHERE UserType = @UserType AND User_ID = @User_ID AND UsedAt IS NULL;
+
+            INSERT INTO PasswordResetToken (UserType, User_ID, TokenHash, ExpiresAt)
+            VALUES (@UserType, @User_ID, @TokenHash, DATEADD(MINUTE, 30, SYSUTCDATETIME()));
+          `);
+
+        const resetUrl = new URL('reset-password.html', appUrl.toString().endsWith('/')
+          ? appUrl.toString()
+          : appUrl.toString() + '/');
+        resetUrl.searchParams.set('token', token);
+        const safeUrl = resetUrl.toString().replace(/&/g, '&amp;');
+
+        try {
+          await mailer.sendMail({
+            from: process.env.SMTP_FROM,
+            to: user.Email,
+            subject: 'Reset your Forte Community Clinic password',
+            text: `Use this link to reset your password. It expires in 30 minutes:\n\n${resetUrl.toString()}\n\nIf you did not request this, you can ignore this email.`,
+            html: `<p>Use this link to reset your password. It expires in 30 minutes:</p><p><a href="${safeUrl}">Reset your password</a></p><p>If you did not request this, you can ignore this email.</p>`
+          });
+        } catch (mailError) {
+          await db.request()
+            .input('TokenHash', sql.Char(64), tokenHash)
+            .query('UPDATE PasswordResetToken SET UsedAt = SYSUTCDATETIME() WHERE TokenHash = @TokenHash');
+          console.error('Password reset email delivery failed:', mailError.code || mailError.message);
+        }
+      }
+    }
+
+    res.status(202).json({
+      message: 'If an active account matches that email address, a password reset link will be sent.'
+    });
+  } catch (err) {
+    if (err.status !== 503) console.error('Password reset request failed:', err);
+    const notConfigured = /not configured|SMTP_PORT|PUBLIC_APP_URL/.test(err.message || '');
+    const status = notConfigured || err.status === 503 ? 503 : 500;
+    res.status(status).json({
+      message: notConfigured
+        ? 'Password reset email is not configured on the server. Contact clinic support.'
+        : status === 503
+          ? 'The email server rejected the reset configuration. Check the Gmail app password in the backend settings.'
+          : 'Unable to start password reset. Please try again later.'
+    });
+  }
+});
+
+app.post('/api/auth/reset-password', async (req, res) => {
+  const body = req.body || {};
+  const token = typeof body.token === 'string' ? body.token : '';
+  const password = typeof body.password === 'string' ? body.password : '';
+
+  if (!/^[a-f0-9]{64}$/i.test(token)) {
+    return res.status(400).json({ message: 'This password reset link is invalid or has expired.' });
+  }
+  if (password.length < 8 || Buffer.byteLength(password, 'utf8') > 72) {
+    return res.status(400).json({ message: 'Use a password between 8 and 72 bytes long.' });
+  }
+
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+  let transaction;
+  try {
+    const db = await getPool();
+    transaction = new sql.Transaction(db);
+    await transaction.begin();
+
+    const result = await new sql.Request(transaction)
+      .input('TokenHash', sql.Char(64), tokenHash)
+      .query(`
+        SELECT TOP (1) UserType, User_ID
+        FROM PasswordResetToken WITH (UPDLOCK, ROWLOCK)
+        WHERE TokenHash = @TokenHash AND UsedAt IS NULL AND ExpiresAt > SYSUTCDATETIME()
+      `);
+    const reset = result.recordset[0];
+    if (!reset || !['Patient', 'Employee'].includes(reset.UserType)) {
+      await transaction.rollback();
+      return res.status(400).json({ message: 'This password reset link is invalid or has expired.' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const accountTable = reset.UserType === 'Patient' ? 'Patient' : 'Employee';
+    const accountId = reset.UserType === 'Patient' ? 'Patient_ID' : 'Employee_ID';
+    const updated = await new sql.Request(transaction)
+      .input('User_ID', sql.Int, reset.User_ID)
+      .input('PasswordHash', sql.NVarChar(255), passwordHash)
+      .query(`UPDATE ${accountTable} SET PasswordHash = @PasswordHash WHERE ${accountId} = @User_ID AND IsActive = 1`);
+
+    if (!updated.rowsAffected[0]) {
+      await transaction.rollback();
+      return res.status(400).json({ message: 'This password reset link is invalid or has expired.' });
+    }
+
+    await new sql.Request(transaction)
+      .input('TokenHash', sql.Char(64), tokenHash)
+      .input('UserType', sql.NVarChar(20), reset.UserType)
+      .input('User_ID', sql.Int, reset.User_ID)
+      .query(`
+        UPDATE PasswordResetToken
+        SET UsedAt = SYSUTCDATETIME()
+        WHERE UserType = @UserType AND User_ID = @User_ID AND UsedAt IS NULL
+      `);
+    await transaction.commit();
+    res.json({ message: 'Your password has been reset. You can now sign in.' });
+  } catch (err) {
+    if (transaction) {
+      try { await transaction.rollback(); } catch (rollbackError) {
+        console.error('Password reset transaction rollback failed:', rollbackError);
+      }
+    }
+    console.error('Password reset completion failed:', err);
+    res.status(500).json({ message: 'Unable to reset your password. Please try again later.' });
+  }
+});
 
 // ---------- Auth routes ----------
 app.post('/api/auth/login', async (req, res) => {

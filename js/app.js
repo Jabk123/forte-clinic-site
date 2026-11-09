@@ -132,6 +132,12 @@ const DB = {
   async login(email, password) {
     return API.post('/auth/login', { email, password });
   },
+  async requestPasswordReset(email) {
+    return API.post('/auth/forgot-password', { email });
+  },
+  async resetPassword(token, password) {
+    return API.post('/auth/reset-password', { token, password });
+  },
   async registerPatient(payload) {
     return API.post('/patients/register', payload);
   },
