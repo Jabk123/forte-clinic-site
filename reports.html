@@ -12,30 +12,40 @@
   <div class="dash-layout">
     <nav class="tabs-nav" id="dash-nav"></nav>
     <main class="dash-main">
-      <div class="breadcrumb">REPORTS</div>
-      <h2 class="page-title">Generate Reports</h2>
-      <p class="page-desc">Manager selects report type, filters details, and can print/export the report.</p>
-      <div class="card">
-        <div class="card-head"><h3>Report form</h3></div>
-        <label for="rtype">Report type</label>
-        <select id="rtype">
-          <option value="appointments">Appointments by status</option>
-          <option value="payments">Payments summary</option>
-          <option value="consultations">Consultations</option>
-          <option value="inventory">Inventory levels</option>
-        </select>
-        <label for="from">From date (optional)</label>
-        <input type="date" id="from">
-        <label for="to">To date (optional)</label>
-        <input type="date" id="to">
-        <div class="btn-row">
-          <button type="button" class="btn btn-primary" id="run">Retrieve report</button>
-          <button type="button" class="btn btn-ghost" id="print">Print report</button>
+      <div class="screen-only">
+        <div class="breadcrumb">REPORTS</div>
+        <h2 class="page-title">Generate Reports</h2>
+        <p class="page-desc">Prepare and print a formatted clinic management report.</p>
+        <div class="card report-controls" id="report-controls">
+          <div class="card-head"><h3>Report options</h3></div>
+          <div class="report-filters">
+            <div>
+              <label for="rtype">Report type</label>
+              <select id="rtype">
+                <option value="appointments">Appointments by status</option>
+                <option value="payments">Payments summary</option>
+                <option value="consultations">Consultations</option>
+                <option value="inventory">Inventory levels</option>
+              </select>
+            </div>
+            <div>
+              <label for="from">From date</label>
+              <input type="date" id="from">
+            </div>
+            <div>
+              <label for="to">To date</label>
+              <input type="date" id="to">
+            </div>
+          </div>
+          <p class="report-filter-note" id="date-filter-note">Choose a date range or leave both dates blank to include all available records.</p>
+          <div class="btn-row">
+            <button type="button" class="btn btn-primary" id="run">Retrieve report</button>
+            <button type="button" class="btn btn-ghost" id="print" disabled>Print report</button>
+          </div>
         </div>
       </div>
-      <div class="card">
-        <div class="card-head"><h3>Report details</h3></div>
-        <div id="out" aria-live="polite"></div>
+      <div class="report-sheet" id="report-paper" aria-live="polite" aria-label="Generated report">
+        <div id="out"><p class="report-placeholder">Preparing the latest report…</p></div>
       </div>
     </main>
   </div>
@@ -45,6 +55,12 @@
     const s = Session.requireLogin(['Manager', 'Admin']);
     if (!s) throw new Error('redirect');
     renderChrome('reports.html');
+    const reportTypes = {
+      appointments: 'Appointments by status',
+      payments: 'Payments summary',
+      consultations: 'Consultations',
+      inventory: 'Inventory levels'
+    };
     function dateKey(value) {
       return value ? String(value).slice(0, 10) : '';
     }
@@ -63,16 +79,104 @@
         return date && (!from || date >= from) && (!to || date <= to);
       });
     }
+    function reportPeriod(from, to, type) {
+      if (type === 'inventory') return 'Current inventory snapshot';
+      if (from && to) return `${formatDate(from)} – ${formatDate(to)}`;
+      if (from) return `From ${formatDate(from)}`;
+      if (to) return `Through ${formatDate(to)}`;
+      return 'All available records';
+    }
+    function renderChart(series, rows, valueFormatter = value => String(value)) {
+      if (!rows.length) return '<p class="report-chart-empty">There is no data to display for this period.</p>';
+      const max = Math.max(1, ...rows.flatMap(row => row.values).filter(Number.isFinite));
+      const seriesMarkup = series.map(item =>
+        `<span class="chart-legend-item"><i class="chart-legend-swatch ${item.color}" aria-hidden="true"></i>${escapeHtml(item.label)}</span>`
+      ).join('');
+      return `<div class="report-chart-legend">${seriesMarkup}</div>
+        <div class="report-chart-rows">${rows.map(row => `
+          <div class="report-chart-row">
+            <div class="report-chart-label">${escapeHtml(row.label)}</div>
+            <div class="report-chart-series">${row.values.map((value, index) => {
+              const safeValue = Number.isFinite(value) && value > 0 ? value : 0;
+              const width = Math.min(100, safeValue / max * 100);
+              return `<div class="report-chart-value">
+                <span class="report-chart-value-label">${escapeHtml(valueFormatter(value))}</span>
+                <div class="report-chart-track" role="img" aria-label="${escapeHtml(series[index].label)}: ${escapeHtml(valueFormatter(value))}">
+                  <span class="report-chart-bar ${series[index].color}" style="width:${width}%"></span>
+                </div>
+              </div>`;
+            }).join('')}</div>
+          </div>`).join('')}</div>`;
+    }
+    function renderReport({ type, from, to, summary, chart, columns, rows, emptyMessage }) {
+      const generatedAt = new Date().toLocaleString('en-ZA', {
+        day: '2-digit', month: 'short', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+      });
+      const period = reportPeriod(from, to, type);
+      document.getElementById('out').innerHTML = `
+        <article class="report-document">
+          <header class="report-masthead">
+            <div class="report-brand">
+              <span class="report-brand-mark" aria-hidden="true">+</span>
+              <div><strong>Forte Community Clinic</strong><span>Clinic Information System</span></div>
+            </div>
+            <div class="report-label">Management report</div>
+          </header>
+          <section class="report-title-block">
+            <p class="report-eyebrow">Operational reporting</p>
+            <h1>${escapeHtml(reportTypes[type])}</h1>
+            <p>Confidential — for authorised clinic management use</p>
+          </section>
+          <dl class="report-metadata">
+            <div><dt>Reporting period</dt><dd>${escapeHtml(period)}</dd></div>
+            <div><dt>Generated</dt><dd>${escapeHtml(generatedAt)}</dd></div>
+            <div><dt>Prepared by</dt><dd>${escapeHtml([s.FirstName, s.LastName].filter(Boolean).join(' ') || 'Clinic management')}</dd></div>
+          </dl>
+          <section class="report-summary" aria-label="Report summary">
+            ${summary.map(item => `<div class="report-metric"><span>${escapeHtml(item.label)}</span><strong>${escapeHtml(item.value)}</strong></div>`).join('')}
+          </section>
+          <section class="report-chart" aria-label="Visual summary">
+            <h2>${escapeHtml(chart.title)}</h2>
+            ${renderChart(chart.series, chart.rows, chart.formatter)}
+          </section>
+          <section class="report-data">
+            <h2>Detailed records</h2>
+            ${rows.length
+              ? `<div class="report-table-wrap"><table class="report-table">
+                  <thead><tr>${columns.map(column => `<th>${escapeHtml(column)}</th>`).join('')}</tr></thead>
+                  <tbody>${rows.map(row => `<tr>${row.map(cell => `<td>${cell}</td>`).join('')}</tr>`).join('')}</tbody>
+                </table></div>`
+              : `<p class="report-no-data">${escapeHtml(emptyMessage)}</p>`}
+          </section>
+          <footer class="report-footer">
+            <span>Forte Community Clinic · Clinic Information System</span>
+            <span>Confidential management report</span>
+          </footer>
+        </article>`;
+    }
+    function updateDateFilter() {
+      const inventory = document.getElementById('rtype').value === 'inventory';
+      document.getElementById('from').disabled = inventory;
+      document.getElementById('to').disabled = inventory;
+      document.getElementById('date-filter-note').textContent = inventory
+        ? 'Inventory reports show current stock levels; date filters do not apply.'
+        : 'Choose a date range or leave both dates blank to include all available records.';
+    }
     async function runReport() {
       const type = document.getElementById('rtype').value;
       const from = document.getElementById('from').value;
       const to = document.getElementById('to').value;
-      const el = document.getElementById('out');
+      const printButton = document.getElementById('print');
+      const runButton = document.getElementById('run');
+      printButton.disabled = true;
+      runButton.disabled = true;
+      document.getElementById('out').innerHTML = '<p class="report-placeholder">Preparing report…</p>';
       if (from && to && from > to) {
-        el.innerHTML = emptyState('The start date must be on or before the end date.');
+        document.getElementById('out').innerHTML = '<p class="report-placeholder report-error">The start date must be on or before the end date.</p>';
+        runButton.disabled = false;
         return;
       }
-      el.innerHTML = '<p>Loading report…</p>';
       try {
         if (type === 'appointments') {
           const data = await DB.getAppointments();
@@ -82,41 +186,133 @@
             const status = a.AppointmentStatus || a.Status || 'Unknown';
             statuses[status] = (statuses[status] || 0) + 1;
           });
-          el.innerHTML = rows.length
-            ? `<p><strong>Total appointments:</strong> ${rows.length}</p>
-               <div class="table-wrap"><table><thead><tr><th>Status</th><th>Count</th></tr></thead>
-               <tbody>${Object.entries(statuses).map(([status, count]) => `<tr><td>${statusBadge(escapeHtml(status))}</td><td class="mono">${count}</td></tr>`).join('')}</tbody></table></div>`
-            : emptyState('No appointments for the selected date range.');
+          renderReport({
+            type, from, to,
+            summary: [
+              { label: 'Total appointments', value: rows.length },
+              { label: 'Status categories', value: Object.keys(statuses).length }
+            ],
+            chart: {
+              title: 'Appointments by status',
+              series: [{ label: 'Appointments', color: 'chart-teal' }],
+              rows: Object.entries(statuses).map(([label, count]) => ({ label, values: [count] }))
+            },
+            columns: ['Appointment status', 'Record count'],
+            rows: Object.entries(statuses).map(([status, count]) => [escapeHtml(status), escapeHtml(count)]),
+            emptyMessage: 'No appointments were found for the selected reporting period.'
+          });
         } else if (type === 'payments') {
           const data = await DB.getPayments();
           const rows = filterByDate(data, 'PaymentDate', from, to);
-          const total = rows.filter(p => String(p.IsPaid).toLowerCase() === 'yes').reduce((sum, p) => sum + Number(p.PaymentAmount || 0), 0);
-          el.innerHTML = rows.length
-            ? `<p><strong>Collected:</strong> ${formatCurrency(total)} · <strong>Records:</strong> ${rows.length}</p>
-               <div class="table-wrap"><table><thead><tr><th>Date</th><th>Service</th><th>Amount</th><th>Status</th></tr></thead>
-               <tbody>${rows.map(p => `<tr><td>${formatDate(dateKey(p.PaymentDate))}</td><td>${escapeHtml(p.ServiceName)}</td><td class="mono">${formatCurrency(p.PaymentAmount)}</td><td>${statusBadge(escapeHtml(p.IsPaid))}</td></tr>`).join('')}</tbody></table></div>`
-            : emptyState('No payments for the selected date range.');
+          const paidRows = rows.filter(p => String(p.IsPaid).toLowerCase() === 'yes');
+          const outstandingRows = rows.filter(p => String(p.IsPaid).toLowerCase() !== 'yes');
+          const total = paidRows.reduce((sum, p) => sum + Number(p.PaymentAmount || 0), 0);
+          const outstandingTotal = outstandingRows.reduce((sum, p) => sum + Number(p.PaymentAmount || 0), 0);
+          renderReport({
+            type, from, to,
+            summary: [
+              { label: 'Payments recorded', value: rows.length },
+              { label: 'Collected', value: formatCurrency(total) }
+            ],
+            chart: {
+              title: 'Payment amount by status',
+              series: [{ label: 'Paid', color: 'chart-teal' }, { label: 'Outstanding / other', color: 'chart-amber' }],
+              rows: [{ label: 'Payment amount', values: [total, outstandingTotal] }],
+              formatter: formatCurrency
+            },
+            columns: ['Payment date', 'Service', 'Amount', 'Payment status'],
+            rows: rows.map(p => [
+              escapeHtml(formatDate(dateKey(p.PaymentDate))),
+              escapeHtml(p.ServiceName || '—'),
+              escapeHtml(formatCurrency(p.PaymentAmount)),
+              escapeHtml(p.IsPaid || '—')
+            ]),
+            emptyMessage: 'No payments were found for the selected reporting period.'
+          });
         } else if (type === 'consultations') {
           const data = await DB.getConsultations();
           const rows = filterByDate(data, 'ConsultationDate', from, to);
-          el.innerHTML = rows.length
-            ? `<p><strong>Total consultations:</strong> ${rows.length}</p>
-               <div class="table-wrap"><table><thead><tr><th>Date</th><th>Patient</th><th>Diagnosis</th><th>Notes</th></tr></thead>
-               <tbody>${rows.map(c => `<tr><td>${formatDate(dateKey(c.ConsultationDate))}</td><td>${escapeHtml([c.PatientFirstName, c.PatientLastName].filter(Boolean).join(' ')) || '—'}</td><td>${escapeHtml(c.DiagnosisSummary) || '—'}</td><td>${escapeHtml(c.Notes) || '—'}</td></tr>`).join('')}</tbody></table></div>`
-            : emptyState('No consultations for the selected date range.');
+          const consultationsByDate = {};
+          rows.forEach(consultation => {
+            const date = dateKey(consultation.ConsultationDate);
+            consultationsByDate[date] = (consultationsByDate[date] || 0) + 1;
+          });
+          const consultationDates = Object.entries(consultationsByDate)
+            .sort(([dateA], [dateB]) => dateA.localeCompare(dateB))
+            .slice(-14);
+          renderReport({
+            type, from, to,
+            summary: [{ label: 'Total consultations', value: rows.length }],
+            chart: {
+              title: 'Consultations over time',
+              series: [{ label: 'Consultations', color: 'chart-teal' }],
+              rows: consultationDates.map(([date, count]) => ({
+                label: formatDate(date),
+                values: [count]
+              }))
+            },
+            columns: ['Consultation date', 'Patient', 'Diagnosis', 'Notes'],
+            rows: rows.map(c => [
+              escapeHtml(formatDate(dateKey(c.ConsultationDate))),
+              escapeHtml([c.PatientFirstName, c.PatientLastName].filter(Boolean).join(' ') || '—'),
+              escapeHtml(c.DiagnosisSummary || '—'),
+              escapeHtml(c.Notes || '—')
+            ]),
+            emptyMessage: 'No consultations were found for the selected reporting period.'
+          });
         } else {
           const rows = await DB.getInventory();
-          el.innerHTML = rows.length
-            ? `<div class="table-wrap"><table><thead><tr><th>Medication</th><th>Stock</th><th>Reorder</th><th>Expiry</th></tr></thead>
-               <tbody>${rows.map(i => `<tr><td>${escapeHtml([i.MedicationName, i.Concentration].filter(Boolean).join(' '))}</td><td class="mono">${escapeHtml(i.StockQuantity)}</td><td class="mono">${escapeHtml(i.ReorderLevel)}</td><td>${formatDate(i.ExpiryDate)}</td></tr>`).join('')}</tbody></table></div>`
-            : emptyState('No inventory records found.');
+          const lowStock = rows.filter(item => Number(item.StockQuantity) <= Number(item.ReorderLevel)).length;
+          const chartRows = rows
+            .map(item => ({
+              label: [item.MedicationName, item.Concentration].filter(Boolean).join(' ') || 'Unnamed medication',
+              stock: Number(item.StockQuantity),
+              reorder: Number(item.ReorderLevel)
+            }))
+            .filter(item => Number.isFinite(item.stock) && Number.isFinite(item.reorder))
+            .sort((left, right) => left.stock - right.stock)
+            .slice(0, 10)
+            .map(item => ({ label: item.label, values: [item.stock, item.reorder] }));
+          renderReport({
+            type, from, to,
+            summary: [
+              { label: 'Inventory items', value: rows.length },
+              { label: 'At or below reorder level', value: lowStock }
+            ],
+            chart: {
+              title: 'Lowest stock compared with reorder levels',
+              series: [{ label: 'Stock on hand', color: 'chart-teal' }, { label: 'Reorder level', color: 'chart-amber' }],
+              rows: chartRows
+            },
+            columns: ['Medication', 'Stock on hand', 'Reorder level', 'Expiry date'],
+            rows: rows.map(item => [
+              escapeHtml([item.MedicationName, item.Concentration].filter(Boolean).join(' ') || '—'),
+              escapeHtml(item.StockQuantity ?? '—'),
+              escapeHtml(item.ReorderLevel ?? '—'),
+              escapeHtml(item.ExpiryDate ? formatDate(dateKey(item.ExpiryDate)) : '—')
+            ]),
+            emptyMessage: 'No inventory records are currently available.'
+          });
         }
+        printButton.disabled = false;
       } catch (err) {
-        el.innerHTML = emptyState(escapeHtml(apiErrorMessage(err)));
+        document.getElementById('out').innerHTML = `<p class="report-placeholder report-error">${escapeHtml(apiErrorMessage(err))}</p>`;
+      } finally {
+        runButton.disabled = false;
       }
     }
+    function invalidateReport() {
+      document.getElementById('print').disabled = true;
+    }
+    document.getElementById('rtype').addEventListener('change', () => {
+      updateDateFilter();
+      invalidateReport();
+    });
+    document.getElementById('from').addEventListener('change', invalidateReport);
+    document.getElementById('to').addEventListener('change', invalidateReport);
     document.getElementById('run').addEventListener('click', runReport);
     document.getElementById('print').addEventListener('click', () => window.print());
+    updateDateFilter();
     runReport();
   </script>
 </body>
