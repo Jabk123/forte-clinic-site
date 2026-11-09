@@ -32,12 +32,12 @@
           <div class="grid-2">
             <div>
               <label for="firstName">First name <span class="req">*</span></label>
-              <input type="text" id="firstName" autocomplete="given-name">
+              <input type="text" id="firstName" autocomplete="given-name" maxlength="100">
               <div class="field-error" id="err-first"></div>
             </div>
             <div>
               <label for="lastName">Last name <span class="req">*</span></label>
-              <input type="text" id="lastName" autocomplete="family-name">
+              <input type="text" id="lastName" autocomplete="family-name" maxlength="100">
               <div class="field-error" id="err-last"></div>
             </div>
           </div>
@@ -102,8 +102,8 @@
     if (!fields.lastName) fields.lastName = document.getElementById('lastName');
 
     const checks = {
-      firstName: bindField(fields.firstName, document.getElementById('err-first'), v => Validate.minLen(v, 2), 'Enter your first name.'),
-      lastName: bindField(fields.lastName, document.getElementById('err-last'), v => Validate.minLen(v, 2), 'Enter your last name.'),
+      firstName: bindField(fields.firstName, document.getElementById('err-first'), v => Validate.name(v), 'Enter a valid first name using letters only; numbers are not allowed.'),
+      lastName: bindField(fields.lastName, document.getElementById('err-last'), v => Validate.name(v), 'Enter a valid last name using letters only; numbers are not allowed.'),
       email: bindField(fields.email, document.getElementById('err-email'), v => Validate.email(v), 'Enter a valid email address.'),
       phone: bindField(fields.phone, document.getElementById('err-phone'), v => Validate.phone(v), 'Enter a valid 10-digit SA number starting with 0.'),
       dob: bindField(fields.dob, document.getElementById('err-dob'), v => Validate.notEmpty(v), 'Date of birth is required.'),

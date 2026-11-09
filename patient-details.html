@@ -29,8 +29,8 @@
         <form id="edit-form" novalidate>
           <input type="hidden" id="edit-id">
           <div class="grid-2">
-            <div><label for="efirst">First name <span class="req">*</span></label><input type="text" id="efirst"></div>
-            <div><label for="elast">Last name <span class="req">*</span></label><input type="text" id="elast"></div>
+            <div><label for="efirst">First name <span class="req">*</span></label><input type="text" id="efirst" maxlength="100"></div>
+            <div><label for="elast">Last name <span class="req">*</span></label><input type="text" id="elast" maxlength="100"></div>
           </div>
           <label for="ephone">Contact number <span class="req">*</span></label><input type="tel" id="ephone">
           <label for="eemail">Email <span class="req">*</span></label><input type="email" id="eemail">
@@ -137,11 +137,11 @@
         Address: document.getElementById('eaddress').value.trim(),
         EmergencyContact: document.getElementById('eemerg').value.replace(/\s/g, '') || null
       };
-      if (payload.FirstName.length < 2 || payload.LastName.length < 2 ||
+      if (!Validate.name(payload.FirstName) || !Validate.name(payload.LastName) ||
           !Validate.phone(payload.ContactNumber) || !Validate.email(payload.Email) ||
           payload.Address.length < 8 ||
           (payload.EmergencyContact && !Validate.phone(payload.EmergencyContact))) {
-        showBanner('form-banner', 'Enter valid names, a valid 10-digit SA contact number, email, address, and optional emergency number.', 'error');
+        showBanner('form-banner', 'Enter valid names using letters only (numbers are not allowed), a valid 10-digit SA contact number, email, address, and optional emergency number.', 'error');
         return;
       }
       saveButton.disabled = true;

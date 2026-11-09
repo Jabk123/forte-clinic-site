@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Page not found — Forte Community Clinic</title>
+  <script>
+    const pagePath = window.location.pathname.match(/^(.*\/)[^/]+\.html(?:\/.*)?$/i);
+    const base = document.createElement('base');
+    base.href = pagePath ? pagePath[1] : new URL('.', window.location.href).pathname;
+    document.head.insertBefore(base, document.head.firstChild);
+  </script>
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="css/style.css">
 </head>

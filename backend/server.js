@@ -11,6 +11,7 @@
 
 require('dotenv').config();
 const express = require('express');
+const path = require('path');
 const cors = require('cors');
 const sql = require('mssql');
 const bcrypt = require('bcryptjs');
@@ -22,6 +23,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-only-change-me';
 const API_VERSION = '2026.10.20-reception-1';
+
+function isValidName(value) {
+  const name = String(value || '').trim();
+  return name.length >= 2 && name.length <= 100 &&
+    /^[\p{L}\p{M}]+(?:[ '\u2019.-][\p{L}\p{M}]+)*$/u.test(name);
+}
 
 // CORS — allow your GitHub Pages origin and local dev
 const allowedOrigins = (process.env.CORS_ORIGIN || 'http://localhost:5500,http://127.0.0.1:5500')
@@ -427,9 +434,14 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/patients/register', async (req, res) => {
   try {
     const b = req.body || {};
+    const firstName = String(b.FirstName || '').trim();
+    const lastName = String(b.LastName || '').trim();
     const required = ['FirstName', 'LastName', 'Email', 'Password'];
     for (const f of required) {
       if (!b[f]) return res.status(400).json({ message: f + ' is required' });
+    }
+    if (!isValidName(firstName) || !isValidName(lastName)) {
+      return res.status(400).json({ message: 'Enter valid first and last names using letters only; numbers are not allowed.' });
     }
     const db = await getPool();
     const email = String(b.Email).trim().toLowerCase();
@@ -440,8 +452,8 @@ app.post('/api/patients/register', async (req, res) => {
     }
     const hash = await bcrypt.hash(b.Password, 10);
     const result = await db.request()
-      .input('FirstName', sql.NVarChar, b.FirstName)
-      .input('LastName', sql.NVarChar, b.LastName)
+      .input('FirstName', sql.NVarChar(100), firstName)
+      .input('LastName', sql.NVarChar(100), lastName)
       .input('ContactNumber', sql.NVarChar, b.ContactNumber || null)
       .input('Email', sql.NVarChar, email)
       .input('PasswordHash', sql.NVarChar, hash)
@@ -525,8 +537,7 @@ app.put('/api/patients/:id', authMiddleware, async (req, res) => {
   if (!Number.isInteger(patientId) || patientId <= 0) {
     return res.status(400).json({ message: 'Invalid patient ID' });
   }
-  if (firstName.length < 2 || firstName.length > 100 ||
-      lastName.length < 2 || lastName.length > 100 ||
+  if (!isValidName(firstName) || !isValidName(lastName) ||
       !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.length > 255 ||
       !/^0\d{9}$/.test(contactNumber) ||
       address.length < 8 || address.length > 500 ||
@@ -1683,9 +1694,14 @@ app.post('/api/employees', authMiddleware, async (req, res) => {
       return res.status(403).json({ message: 'Only Admin can register employees' });
     }
     const b = req.body || {};
+    const firstName = String(b.FirstName || '').trim();
+    const lastName = String(b.LastName || '').trim();
     const required = ['FirstName', 'LastName', 'Email', 'Password', 'EmployeeType'];
     for (const f of required) {
       if (!b[f]) return res.status(400).json({ message: f + ' is required' });
+    }
+    if (!isValidName(firstName) || !isValidName(lastName)) {
+      return res.status(400).json({ message: 'Enter valid first and last names using letters only; numbers are not allowed.' });
     }
     db = await getPool();
     email = String(b.Email).trim().toLowerCase();
@@ -1697,8 +1713,8 @@ app.post('/api/employees', authMiddleware, async (req, res) => {
     }
     const hash = await bcrypt.hash(b.Password, 10);
     const result = await db.request()
-      .input('FirstName', sql.NVarChar, b.FirstName)
-      .input('LastName', sql.NVarChar, b.LastName)
+      .input('FirstName', sql.NVarChar(100), firstName)
+      .input('LastName', sql.NVarChar(100), lastName)
       .input('ContactNumber', sql.NVarChar, b.ContactNumber || null)
       .input('Email', sql.NVarChar, email)
       .input('PasswordHash', sql.NVarChar, hash)
@@ -1827,6 +1843,11 @@ app.use('/api', (_req, res) => {
   res.status(501).json({
     message: 'This endpoint is not yet implemented on the server. Extend backend/server.js to match the frontend API calls.'
   });
+});
+
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD') return next();
+  res.status(404).sendFile(path.join(__dirname, '..', '404.html'));
 });
 
 app.listen(PORT, () => {

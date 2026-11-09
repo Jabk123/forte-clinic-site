@@ -21,12 +21,12 @@
           <div class="grid-2">
             <div>
               <label for="firstName">First name <span class="req">*</span></label>
-              <input type="text" id="firstName">
+              <input type="text" id="firstName" maxlength="100">
               <div class="field-error" id="err-first"></div>
             </div>
             <div>
               <label for="lastName">Last name <span class="req">*</span></label>
-              <input type="text" id="lastName">
+              <input type="text" id="lastName" maxlength="100">
               <div class="field-error" id="err-last"></div>
             </div>
           </div>
@@ -73,8 +73,8 @@
     renderChrome('register-employee.html');
 
     const checks = {
-      firstName: bindField(document.getElementById('firstName'), document.getElementById('err-first'), v => Validate.minLen(v, 2), 'Required'),
-      lastName: bindField(document.getElementById('lastName'), document.getElementById('err-last'), v => Validate.minLen(v, 2), 'Required'),
+      firstName: bindField(document.getElementById('firstName'), document.getElementById('err-first'), v => Validate.name(v), 'Enter a valid first name using letters only; numbers are not allowed.'),
+      lastName: bindField(document.getElementById('lastName'), document.getElementById('err-last'), v => Validate.name(v), 'Enter a valid last name using letters only; numbers are not allowed.'),
       email: bindField(document.getElementById('email'), document.getElementById('err-email'), v => Validate.email(v), 'Valid email required'),
       phone: bindField(document.getElementById('phone'), document.getElementById('err-phone'), v => Validate.phone(v), 'Valid SA number required'),
       type: bindField(document.getElementById('type'), document.getElementById('err-type'), v => Validate.notEmpty(v), 'Select employee type'),

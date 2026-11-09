@@ -255,10 +255,11 @@ function emptyState(message, actionHtml = '') {
 }
 
 function apiErrorMessage(err) {
-  if (err && err.code === 'NETWORK') {
-    return 'Server is offline or unreachable. Please ensure the backend API is running.';
+  if (!err || err.code === 'NETWORK' || !Number.isInteger(err.status) ||
+      err.status === 404 || err.status === 501 || err.status >= 500) {
+    return 'We are unable to complete your request at this time. Please contact Forte Community Clinic at fortecommunityclinic@gmail.com for assistance.';
   }
-  return (err && err.message) || 'Something went wrong. Please try again.';
+  return err.message || 'Please review your information and try again.';
 }
 
 const Validate = {
@@ -266,6 +267,11 @@ const Validate = {
   phone(v) { return /^0\d{9}$/.test(String(v).replace(/\s/g, '')); },
   notEmpty(v) { return v !== undefined && v !== null && String(v).trim().length > 0; },
   minLen(v, n) { return String(v || '').trim().length >= n; },
+  name(v) {
+    const value = String(v || '').trim();
+    return value.length >= 2 && value.length <= 100 &&
+      /^[\p{L}\p{M}]+(?:[ '\u2019.-][\p{L}\p{M}]+)*$/u.test(value);
+  },
   password(v) { return /^(?=.*[A-Za-z])(?=.*\d).{8,}$/.test(v); },
   isFutureOrTodayDate(v) {
     if (!v) return false;
